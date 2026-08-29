@@ -1,0 +1,35 @@
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  background-color: #f0f2f5;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* 列表页通用样式（母库等模块共用） */
+.page-card .toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.page-card .toolbar-right {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.page-card .pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
