@@ -3,8 +3,8 @@
     <!-- 左侧暗色侧边栏 -->
     <el-aside width="220px" class="layout-aside">
       <div class="layout-logo">
-        <span class="logo-mark">BP</span>
-        <span class="logo-text">BridgePort OS</span>
+        <span class="logo-mark">MT</span>
+        <span class="logo-text">麦顿 OS</span>
       </div>
       <SideMenu />
     </el-aside>

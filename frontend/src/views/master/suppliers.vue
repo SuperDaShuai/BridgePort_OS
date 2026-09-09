@@ -12,7 +12,7 @@
       />
       <el-button :icon="Search" @click="onSearch">搜索</el-button>
       <div class="toolbar-right">
-        <el-button type="primary" :icon="Plus" @click="openCreate">新增供应商</el-button>
+        <el-button v-if="canEdit" type="primary" :icon="Plus" @click="openCreate">新增供应商</el-button>
       </div>
     </div>
 
@@ -24,10 +24,11 @@
       <el-table-column prop="factory_address" label="工厂地址" min-width="180" show-overflow-tooltip />
       <el-table-column prop="bank_name" label="开户银行" min-width="160" show-overflow-tooltip />
       <el-table-column prop="account_number" label="银行账号" width="150" show-overflow-tooltip />
-      <el-table-column label="操作" width="130" align="center" fixed="right">
+      <el-table-column label="操作" width="160" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+          <el-button link type="info" @click="openView(row)">查看</el-button>
+          <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canEdit" link type="danger" @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -46,11 +47,11 @@
     <!-- 新增/编辑弹窗 -->
     <el-dialog
       v-model="dialogVisible"
-      :title="form.id ? '编辑供应商' : '新增供应商'"
+      :title="readonly ? '查看供应商' : (form.id ? '编辑供应商' : '新增供应商')"
       width="760px"
       destroy-on-close
     >
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
+      <el-form ref="formRef" :model="form" :rules="rules" :disabled="readonly" label-width="90px">
         <el-row :gutter="16">
           <el-col :span="12">
             <el-form-item label="工厂名称" prop="name">
@@ -89,8 +90,8 @@
       </el-form>
 
       <template #footer>
-        <el-button @click="dialogVisible = false">取 消</el-button>
-        <el-button type="primary" :loading="saving" @click="onSave">保 存</el-button>
+        <el-button @click="dialogVisible = false">{{ readonly ? '关 闭' : '取 消' }}</el-button>
+        <el-button v-if="!readonly" type="primary" :loading="saving" @click="onSave">保 存</el-button>
       </template>
     </el-dialog>
   </el-card>
@@ -102,6 +103,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import ContactsEditor from '@/components/ContactsEditor.vue'
 import { listSuppliers, getSupplier, createSupplier, updateSupplier, deleteSupplier } from '@/api/suppliers'
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
+const canEdit = userStore.canEdit
 
 const loading = ref(false)
 const saving = ref(false)
@@ -110,6 +115,7 @@ const total = ref(0)
 const query = reactive({ q: '', page: 1, pageSize: 10 })
 
 const dialogVisible = ref(false)
+const readonly = ref(false)
 const formRef = ref()
 const form = ref({})
 const rules = {
@@ -140,11 +146,20 @@ function onSearch() {
 }
 
 function openCreate() {
+  readonly.value = false
   form.value = blankForm()
   dialogVisible.value = true
 }
 
+async function openView(row) {
+  readonly.value = true
+  const detail = await getSupplier(row.id)
+  form.value = { ...detail, contacts: detail.contacts || [] }
+  dialogVisible.value = true
+}
+
 async function openEdit(row) {
+  readonly.value = false
   const detail = await getSupplier(row.id)
   form.value = { ...detail, contacts: detail.contacts || [] }
   dialogVisible.value = true

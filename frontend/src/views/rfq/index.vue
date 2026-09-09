@@ -105,7 +105,7 @@
                 <el-option
                   v-for="p in productOptions"
                   :key="p.id"
-                  :label="`${p.model} - ${p.name_cn}`"
+                  :label="p.model"
                   :value="p.id"
                 />
               </el-select>

@@ -35,11 +35,13 @@ app.use('/api/suppliers', require('./routes/suppliers.routes'));
 app.use('/api/products', require('./routes/products.routes'));
 app.use('/api/bank-accounts', require('./routes/bank-accounts.routes'));
 app.use('/api/operators', require('./routes/operators.routes'));
+app.use('/api/company-settings', require('./routes/company-settings.routes'));
 
 // 商机漏斗层
 app.use('/api/rfqs', require('./routes/rfqs.routes'));
 app.use('/api/quotations', require('./routes/quotations.routes'));
 app.use('/api/samples', require('./routes/samples.routes'));
+app.use('/api/orders', require('./routes/orders.routes'));
 
 // 404 兜底
 app.use((req, res) => {

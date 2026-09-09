@@ -1,4 +1,4 @@
-<template>
+﻿﻿﻿﻿<template>
   <el-card shadow="never" class="page-card">
     <!-- 工具栏 -->
     <div class="toolbar">
@@ -26,25 +26,62 @@
       </el-select>
       <el-button :icon="Search" @click="onSearch">搜索</el-button>
       <div class="toolbar-right">
-        <el-button type="primary" :icon="Plus" @click="openCreate">新增产品</el-button>
+        <el-button v-if="canEdit" type="primary" :icon="Plus" @click="openCreate">新增产品</el-button>
       </div>
     </div>
 
     <!-- 列表 -->
     <el-table v-loading="loading" :data="list" border stripe>
-      <el-table-column prop="model" label="型号" width="130" show-overflow-tooltip />
-      <el-table-column prop="name_cn" label="中文品名" min-width="160" show-overflow-tooltip />
-      <el-table-column prop="name_en" label="英文品名" min-width="180" show-overflow-tooltip />
+      <el-table-column label="图片" width="60" align="center">
+        <template #default="{ row }">
+          <el-image
+            v-if="row.img_url"
+            :src="row.img_url"
+            :preview-src-list="[row.img_url]"
+            preview-teleported
+            fit="contain"
+            style="width: 40px; height: 40px; border-radius: 4px"
+          />
+          <span v-else style="color: #c0c4cc">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="型号 / 供应商" width="150" show-overflow-tooltip>
+        <template #default="{ row }">
+          <strong>{{ row.model }}</strong>
+          <div style="font-size: 11px; color: #909399; margin-top: 2px">{{ row.supplier_name || '未绑定' }}</div>
+        </template>
+      </el-table-column>
+      <el-table-column label="英文品名与规格" min-width="220" show-overflow-tooltip>
+        <template #default="{ row }">
+          <strong>{{ row.name_en }}</strong>
+          <div v-if="row.spec" style="font-size: 10px; color: #909399; margin-top: 4px; border-top: 1px dashed #ebeef5; padding-top: 2px">{{ row.spec }}</div>
+        </template>
+      </el-table-column>
       <el-table-column prop="hs_code" label="HS编码" width="100" />
-      <el-table-column prop="supplier_name" label="供应商" width="150" show-overflow-tooltip />
+      <el-table-column label="尺寸 (cm)" width="120">
+        <template #default="{ row }">
+          <div style="font-size: 11px; line-height: 1.6; color: #606266">
+            <div>产品: {{ formatDim(row, 'prod_') }}</div>
+            <div>彩盒: {{ formatDim(row, 'box_') }}</div>
+            <div>外箱: {{ formatDim(row, 'ctn_') }}</div>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column label="装箱与重量" width="130">
+        <template #default="{ row }">
+          <div style="font-size: 11px; line-height: 1.6; color: #606266">
+            <div>{{ row.pcs_per_ctn || '-' }} PCS / {{ row.net_weight_kg || '-' }}kg / {{ row.gross_weight_kg || '-' }}kg</div>
+            <div style="color: var(--el-color-primary); font-weight: bold">装柜: {{ row.est_qty_20gp || '-' }} / {{ row.est_qty_40gp || '-' }} / {{ row.est_qty_40hq || '-' }}</div>
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column prop="purchase_cost_rmb" label="采购价(¥)" width="100" align="right" />
       <el-table-column prop="export_price_usd" label="外销价($)" width="100" align="right" />
-      <el-table-column prop="pcs_per_ctn" label="件/箱" width="80" align="right" />
-      <el-table-column prop="ctn_cbm" label="箱体积(cbm)" width="110" align="right" />
-      <el-table-column label="操作" width="130" align="center" fixed="right">
+      <el-table-column label="操作" width="160" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+          <el-button link type="info" @click="openView(row)">查看</el-button>
+          <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canEdit" link type="danger" @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -63,11 +100,11 @@
     <!-- 新增/编辑弹窗 -->
     <el-dialog
       v-model="dialogVisible"
-      :title="form.id ? '编辑产品' : '新增产品'"
+      :title="readonly ? '查看产品' : (form.id ? '编辑产品' : '新增产品')"
       width="860px"
       destroy-on-close
     >
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+      <el-form ref="formRef" :model="form" :rules="rules" :disabled="readonly" label-width="100px">
         <el-divider content-position="left">基本信息</el-divider>
         <el-row :gutter="16">
           <el-col :span="8">
@@ -93,11 +130,6 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="中文品名" prop="name_cn">
-              <el-input v-model="form.name_cn" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
             <el-form-item label="英文品名" prop="name_en">
               <el-input v-model="form.name_en" />
             </el-form-item>
@@ -109,7 +141,7 @@
           </el-col>
         </el-row>
 
-        <el-divider content-position="left">尺寸 (mm)</el-divider>
+        <el-divider content-position="left">尺寸 (cm)</el-divider>
         <el-row :gutter="16">
           <el-col :span="8">
             <el-form-item label="产品长">
@@ -143,17 +175,17 @@
           </el-col>
           <el-col :span="8">
             <el-form-item label="外箱长">
-              <el-input-number v-model="form.ctn_length" :controls="false" style="width: 100%" />
+              <el-input-number v-model="form.ctn_length" :controls="false" style="width: 100%" @change="autoCalcCbm" />
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="外箱宽">
-              <el-input-number v-model="form.ctn_width" :controls="false" style="width: 100%" />
+              <el-input-number v-model="form.ctn_width" :controls="false" style="width: 100%" @change="autoCalcCbm" />
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="外箱高">
-              <el-input-number v-model="form.ctn_height" :controls="false" style="width: 100%" />
+              <el-input-number v-model="form.ctn_height" :controls="false" style="width: 100%" @change="autoCalcCbm" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -172,12 +204,12 @@
           </el-col>
           <el-col :span="8">
             <el-form-item label="件/箱">
-              <el-input-number v-model="form.pcs_per_ctn" :min="0" :controls="false" style="width: 100%" />
+              <el-input-number v-model="form.pcs_per_ctn" :min="0" :controls="false" style="width: 100%" @change="autoCalcContainerQty" />
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="箱体积(cbm)">
-              <el-input-number v-model="form.ctn_cbm" :controls="false" style="width: 100%" />
+              <el-input-number v-model="form.ctn_cbm" :controls="false" :precision="3" style="width: 100%" @change="autoCalcContainerQty" />
             </el-form-item>
           </el-col>
           <el-col :span="8">
@@ -197,7 +229,7 @@
           </el-col>
         </el-row>
 
-        <el-divider content-position="left">价格</el-divider>
+        <el-divider content-position="left">价格与图片</el-divider>
         <el-row :gutter="16">
           <el-col :span="8">
             <el-form-item label="采购价(¥)" prop="purchase_cost_rmb">
@@ -209,12 +241,32 @@
               <el-input-number v-model="form.export_price_usd" :min="0" :controls="false" style="width: 100%" />
             </el-form-item>
           </el-col>
+          <el-col :span="8">
+            <el-form-item label="产品图片">
+              <div style="display: flex; align-items: center; gap: 12px">
+                <el-image
+                  v-if="form.img_url"
+                  :src="form.img_url"
+                  fit="contain"
+                  style="width: 50px; height: 50px; border: 1px dashed #dcdfe6; border-radius: 4px"
+                />
+                <div v-else style="width: 50px; height: 50px; border: 1px dashed #dcdfe6; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #c0c4cc; font-size: 12px">无</div>
+                <el-upload
+                  :show-file-list="false"
+                  :before-upload="handleProductImg"
+                  accept="image/*"
+                >
+                  <el-button size="small" type="primary" plain>选择图片</el-button>
+                </el-upload>
+              </div>
+            </el-form-item>
+          </el-col>
         </el-row>
       </el-form>
 
       <template #footer>
-        <el-button @click="dialogVisible = false">取 消</el-button>
-        <el-button type="primary" :loading="saving" @click="onSave">保 存</el-button>
+        <el-button @click="dialogVisible = false">{{ readonly ? '关 闭' : '取 消' }}</el-button>
+        <el-button v-if="!readonly" type="primary" :loading="saving" @click="onSave">保 存</el-button>
       </template>
     </el-dialog>
   </el-card>
@@ -226,6 +278,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import { listProducts, createProduct, updateProduct, deleteProduct } from '@/api/products'
 import { listSuppliers } from '@/api/suppliers'
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
+const canEdit = userStore.canEdit
 
 const loading = ref(false)
 const saving = ref(false)
@@ -235,12 +291,12 @@ const supplierOptions = ref([])
 const query = reactive({ q: '', supplierId: null, page: 1, pageSize: 10 })
 
 const dialogVisible = ref(false)
+const readonly = ref(false)
 const formRef = ref()
 const form = ref({})
 const rules = {
   model: [{ required: true, message: '请输入型号', trigger: 'blur' }],
   hs_code: [{ required: true, message: '请输入HS编码', trigger: 'blur' }],
-  name_cn: [{ required: true, message: '请输入中文品名', trigger: 'blur' }],
   name_en: [{ required: true, message: '请输入英文品名', trigger: 'blur' }],
   purchase_cost_rmb: [{ required: true, message: '请输入采购价', trigger: 'blur' }]
 }
@@ -255,9 +311,60 @@ const NUMERIC_FIELDS = [
 ]
 
 const blankForm = () => ({
-  model: '', hs_code: '', supplier_id: null, name_cn: '', name_en: '', spec: '',
+  model: '', hs_code: '', supplier_id: null, name_en: '', spec: '', img_url: '',
   ...Object.fromEntries(NUMERIC_FIELDS.map((k) => [k, undefined]))
 })
+
+// 外箱尺寸 → 自动算 CBM = L×W×H / 1000000（@change 触发，此时 v-model 已更新）
+function autoCalcCbm() {
+  const l = Number(form.value.ctn_length) || 0
+  const w = Number(form.value.ctn_width) || 0
+  const h = Number(form.value.ctn_height) || 0
+  if (l > 0 && w > 0 && h > 0) {
+    form.value.ctn_cbm = Number(((l * w * h) / 1000000).toFixed(3))
+    autoCalcContainerQty()
+  }
+}
+
+// CBM + 件/箱 → 自动算 20GP(28cbm) / 40GP(58cbm) / 40HQ(68cbm)
+function autoCalcContainerQty() {
+  const cbm = Number(form.value.ctn_cbm) || 0
+  const pcs = Number(form.value.pcs_per_ctn) || 1
+  if (cbm > 0) {
+    form.value.est_qty_20gp = Math.floor(28 / cbm) * pcs
+    form.value.est_qty_40gp = Math.floor(58 / cbm) * pcs
+    form.value.est_qty_40hq = Math.floor(68 / cbm) * pcs
+  }
+}
+
+// 图片上传：压缩为 400px 宽 JPEG base64
+function handleProductImg(file) {
+  const reader = new FileReader()
+  reader.onload = (evt) => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      const MAX_WIDTH = 400
+      const scale = MAX_WIDTH / img.width
+      canvas.width = MAX_WIDTH
+      canvas.height = img.height * scale
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      form.value.img_url = canvas.toDataURL('image/jpeg', 0.7)
+    }
+    img.src = evt.target.result
+  }
+  reader.readAsDataURL(file)
+  return false // 阻止自动上传，只做本地压缩
+}
+
+// 列表尺寸格式化
+function formatDim(row, prefix) {
+  const l = row[`${prefix}length`]
+  const w = row[`${prefix}width`]
+  const h = row[`${prefix}height`]
+  return l || w || h ? `${l || '-'}×${w || '-'}×${h || '-'}` : '-'
+}
 
 async function loadList() {
   loading.value = true
@@ -289,11 +396,19 @@ function onSearch() {
 }
 
 function openCreate() {
+  readonly.value = false
   form.value = blankForm()
   dialogVisible.value = true
 }
 
+function openView(row) {
+  readonly.value = true
+  form.value = { ...row }
+  dialogVisible.value = true
+}
+
 function openEdit(row) {
+  readonly.value = false
   form.value = { ...row }
   dialogVisible.value = true
 }

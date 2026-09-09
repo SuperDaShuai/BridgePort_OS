@@ -139,6 +139,12 @@ const routes = [
       },
       // ── 系统管理 ──
       {
+        path: 'system/company-settings',
+        name: 'SystemCompanySettings',
+        component: () => import('@/views/system/company-settings.vue'),
+        meta: { title: '企业配置', permission: 1 }
+      },
+      {
         path: 'system/operators',
         name: 'SystemOperators',
         component: () => import('@/views/system/operators.vue'),

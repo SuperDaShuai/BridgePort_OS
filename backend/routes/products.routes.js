@@ -1,18 +1,18 @@
-const express = require('express');
+﻿﻿﻿﻿const express = require('express');
 const pool = require('../config/db');
 const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers');
 
 const router = express.Router();
 
 const ALLOWED = [
-  'model', 'hs_code', 'supplier_id', 'name_en', 'name_cn', 'spec',
+  'model', 'hs_code', 'supplier_id', 'name_en', 'spec',
   'prod_length', 'prod_width', 'prod_height',
   'box_length', 'box_width', 'box_height',
   'ctn_length', 'ctn_width', 'ctn_height',
   'pcs_per_ctn', 'ctn_cbm', 'est_qty_20gp', 'est_qty_40gp', 'est_qty_40hq',
   'net_weight_kg', 'gross_weight_kg', 'purchase_cost_rmb', 'export_price_usd', 'img_url'
 ];
-const REQUIRED = ['model', 'hs_code', 'name_en', 'name_cn', 'purchase_cost_rmb'];
+const REQUIRED = ['model', 'hs_code', 'name_en', 'purchase_cost_rmb'];
 
 router.get(
   '/',
@@ -23,8 +23,8 @@ router.get(
     const conditions = [];
     const params = [];
     if (q) {
-      conditions.push('(p.model LIKE ? OR p.name_en LIKE ? OR p.name_cn LIKE ? OR p.hs_code LIKE ?)');
-      params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+      conditions.push('(p.model LIKE ? OR p.name_en LIKE ? OR p.hs_code LIKE ?)');
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
     }
     if (supplierId) {
       conditions.push('p.supplier_id = ?');

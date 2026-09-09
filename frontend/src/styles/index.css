@@ -33,3 +33,11 @@ body {
   justify-content: flex-end;
   margin-top: 14px;
 }
+
+/* 查看模式：disabled 输入框允许选中复制 */
+.el-form .el-input__inner:disabled,
+.el-form .el-textarea__inner:disabled {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}

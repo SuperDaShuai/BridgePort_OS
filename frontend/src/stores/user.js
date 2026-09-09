@@ -21,7 +21,9 @@ export const useUserStore = defineStore('user', {
   getters: {
     isLoggedIn: (s) => !!s.token,
     displayName: (s) => s.profile?.display_name || s.profile?.username || '',
-    permissionLevel: (s) => s.profile?.permission_level ?? 99
+    permissionLevel: (s) => s.profile?.permission_level ?? 99,
+    // 管理员（level <= 1）可编辑/删除，其他员工只读
+    canEdit: (s) => (s.profile?.permission_level ?? 99) <= 1
   },
   actions: {
     async login(username, password) {

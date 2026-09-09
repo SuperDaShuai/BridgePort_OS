@@ -5,7 +5,7 @@ const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers'
 const router = express.Router();
 
 const ALLOWED = ['route_type', 'bank_name', 'account_number', 'swift_code', 'routing_note'];
-const REQUIRED = ['route_type', 'bank_name', 'account_number', 'swift_code'];
+const REQUIRED = ['route_type', 'bank_name', 'account_number'];
 
 router.get(
   '/',
