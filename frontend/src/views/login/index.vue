@@ -33,7 +33,7 @@
         </el-button>
       </el-form>
 
-      <p class="login-tip">初始管理员：admin / admin123，首次登录后请及时修改密码</p>
+      <!-- <p class="login-tip">初始管理员：admin / admin123，首次登录后请及时修改密码</p> -->
     </el-card>
   </div>
 </template>
