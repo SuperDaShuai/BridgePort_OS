@@ -1,11 +1,11 @@
-﻿﻿﻿﻿const express = require('express');
+const express = require('express');
 const pool = require('../config/db');
 const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers');
 
 const router = express.Router();
 
 const ALLOWED = [
-  'model', 'hs_code', 'supplier_id', 'name_en', 'spec',
+  'model', 'our_model', 'hs_code', 'supplier_id', 'name_cn', 'name_en', 'spec',
   'prod_length', 'prod_width', 'prod_height',
   'box_length', 'box_width', 'box_height',
   'ctn_length', 'ctn_width', 'ctn_height',
@@ -23,8 +23,8 @@ router.get(
     const conditions = [];
     const params = [];
     if (q) {
-      conditions.push('(p.model LIKE ? OR p.name_en LIKE ? OR p.hs_code LIKE ?)');
-      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+      conditions.push('(p.model LIKE ? OR p.our_model LIKE ? OR p.name_cn LIKE ? OR p.name_en LIKE ? OR p.hs_code LIKE ?)');
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
     }
     if (supplierId) {
       conditions.push('p.supplier_id = ?');

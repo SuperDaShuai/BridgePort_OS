@@ -1,4 +1,5 @@
 // 单据生成共享工具函数
+import { ElMessage } from 'element-plus'
 
 // 人民币金额转中文大写
 export function numberToChineseRMB(n) {
@@ -32,7 +33,7 @@ export function numberToEnglishWords(num) {
   const b = ['', '', 'TWENTY', 'THIRTY', 'FORTY', 'FIFTY', 'SIXTY', 'SEVENTY', 'EIGHTY', 'NINETY']
   function inWords(n) {
     if ((n = n.toString()).length > 9) return 'OVERFLOW'
-    let nArray = ('000000000' + n).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/)
+    let nArray = ('000000000' + n).slice(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/)
     if (!nArray) return ''
     let str = ''
     str += (nArray[1] != 0) ? (a[Number(nArray[1])] || b[nArray[1][0]] + ' ' + a[nArray[1][1]]) + 'CRORE ' : ''
@@ -79,6 +80,10 @@ export function getOrderTotals(order) {
 // 通用打印函数
 export function printDocument(html, title) {
   const win = window.open('', '_blank', 'width=1200,height=900')
+  if (!win) {
+    ElMessage.error('弹窗被浏览器拦截，请允许弹出窗口后重试')
+    return
+  }
   win.document.write(`
     <!DOCTYPE html>
     <html><head><meta charset="utf-8">

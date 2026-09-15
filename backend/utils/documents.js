@@ -4,21 +4,23 @@
 
 /* ================== HS 编码分组聚合 ==================
    同一 HS 编码下的多个明细行合并为一行：
-   - 件数(箱数) = MOQ ÷ 件/箱（每个产品独立计算后累加）
-   - 毛重 = Σ(件数 × 单箱毛重)，净重 = Σ(件数 × 单箱净重)
-   - 体积 = Σ(件数 × 单箱体积)，金额 = Σ(MOQ × 单价)
+   - 箱数 = Σ 各行的 ctns 字段（报价转PI时 moq=箱数，已计算好 ctns 传入）
+   - 数量 = Σ 各行的 qty 字段（ctns × pcs_per_ctn）
+   - 毛重 = Σ(箱数 × 单箱毛重)，净重 = Σ(箱数 × 单箱净重)
+   - 体积 = Σ(箱数 × 单箱体积)，金额 = Σ(数量 × 单价)
    - 单价 = 金额 / 数量（加权平均）
    - 品名/型号/规格 去重拼接
-   注意：qty 字段在报价转PI场景下即 MOQ，在订单场景下 qty = MOQ
+   注意：rawItems 在转PI时已传入 qty(件数) 和 ctns(箱数)；
+         订单场景下无 ctns 时回退为 qty / pcs_per_ctn 计算
 */
 function groupItemsByHs(items) {
   const map = new Map();
   (items || []).forEach((it) => {
     const key = (String(it.hs_code || '').trim()) || 'N/A';
-    const qty = Number(it.qty || 0);           // 报价单 MOQ（订单场景 qty = MOQ）
-    const pcs = Number(it.pcs_per_ctn) || 1;    // 件/箱
-    // 件数 = MOQ ÷ 件/箱（直接相除，不再使用 it.ctns 兜底或 Math.ceil 取整）
-    const ctns = pcs > 0 ? qty / pcs : 0;
+    const qty = Number(it.qty || 0);           // 总数量(件)
+    const pcs = Number(it.pcs_per_ctn) || 1;   // 件/箱
+    // 箱数：优先用传入的 ctns，否则从 qty / pcs 回退计算
+    const ctns = it.ctns != null ? Number(it.ctns) || 0 : (pcs > 0 ? qty / pcs : 0);
     if (!map.has(key)) {
       map.set(key, {
         hs_code: key, models: [], names: [], specs: [], units: [],
@@ -44,13 +46,16 @@ function groupItemsByHs(items) {
     const names = uniq(g.names);
     const specs = uniq(g.specs);
     const units = uniq(g.units);
+    // 报关草单中文名：型号 + 规格/品名，避免空 models 时产生前导 " / "
+    const nameParts = [...models, ...specs];
+    if (names.length) nameParts.push(...names);
     return {
       hs_code: g.hs_code === 'N/A' ? '' : g.hs_code,
       // 清关三单用英文品名（Description of goods）
       product: names.join(' / ') + (models.length ? ' (' + models.join('/') + ')' : ''),
       // 报关草单用中文申报要素（型号 + 规格/品名）
-      name: models.join('/') + (specs.length ? ' / ' + specs.join(' / ') : names.length ? ' / ' + names.join(' / ') : ''),
-      qty: g.qty,
+      name: nameParts.join(' / '),
+      qty: Number(g.qty.toFixed(0)),
       ctn: Number(g.ctn.toFixed(2)),
       nw: Number(g.nw.toFixed(2)),
       gw: Number(g.gw.toFixed(2)),

@@ -126,16 +126,16 @@ const routes = [
         meta: { title: '产品数据库' }
       },
       {
+        path: 'master/hs-codes',
+        name: 'MasterHsCodes',
+        component: () => import('@/views/master/hs-codes.vue'),
+        meta: { title: 'HS编码库' }
+      },
+      {
         path: 'master/suppliers',
         name: 'MasterSuppliers',
         component: () => import('@/views/master/suppliers.vue'),
         meta: { title: '供应商管理' }
-      },
-      {
-        path: 'master/bank-accounts',
-        name: 'MasterBankAccounts',
-        component: () => import('@/views/master/bank-accounts.vue'),
-        meta: { title: '银行账户库' }
       },
       // ── 系统管理 ──
       {

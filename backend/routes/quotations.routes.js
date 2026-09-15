@@ -113,6 +113,12 @@ router.post(
   asyncHandler(async (req, res) => {
     const quoteId = Number(req.params.id);
 
+    // 报关责任：仅允许两种取值，缺省/非法值回落「我司代办报关」
+    const CUSTOMS_OPTIONS = ['我司代办报关', '客户自行报关'];
+    const customsResp = CUSTOMS_OPTIONS.includes(req.body?.customs_responsibility)
+      ? req.body.customs_responsibility
+      : '我司代办报关';
+
     // 1. 读取报价单主表（行锁 SELECT ... FOR UPDATE）
     const conn = await pool.getConnection();
     try {
@@ -180,7 +186,7 @@ router.post(
         supplier_id: supplierId,
         currency: quote.currency || 'USD',
         trade_terms: quote.price_terms || 'FOB',
-        customs_responsibility: '我司代办报关',
+        customs_responsibility: customsResp,
         bank_account_id: bankAccountId,
         payment_terms: quote.payment_terms || null,
         delivery_date: deliveryDate,
@@ -195,12 +201,12 @@ router.post(
         quotation_id: quoteId
       };
 
-      // 7. 明细映射：moq → qty，ctns = ceil(qty / pcs_per_ctn)
+      // 7. 明细映射：moq(箱数) → ctns，qty = ctns × pcs_per_ctn
       let totalAmount = 0;
       const orderItems = items.map((it) => {
         const pcs = Number(it.pcs_per_ctn) || 1;
-        const qty = Number(it.moq) || 0; // 报价单 MOQ 作为订单数量
-        const ctns = Math.ceil(qty / pcs);
+        const ctns = Number(it.moq) || 0; // 报价单"数量(箱)"直接作为订单箱数
+        const qty = ctns * pcs;           // 总数量 = 箱数 × 件/箱
         const price = Number(it.price) || 0;
         const subtotal = Number((qty * price).toFixed(2));
         totalAmount += subtotal;
@@ -209,7 +215,6 @@ router.post(
           product_id: it.product_id,
           model: it.model,
           name_en: it.name_en,
-          name_cn: it.name_cn,
           hs_code: it.hs_code,
           unit: it.unit || '台',
           img_url: it.img_url,
@@ -231,12 +236,17 @@ router.post(
       orderData.total_amount = Number(totalAmount.toFixed(2));
 
       // 7.5 自动生成单据默认数据（购销合同/生产任务单/订舱委托书/报关要素/清关资料）
-      const rawItems = items.map((it) => ({
-        name_en: it.name_en, model: it.model, hs_code: it.hs_code,
-        unit: it.unit, qty: Number(it.moq) || 0, pcs_per_ctn: Number(it.pcs_per_ctn) || 1,
-        nw_per_ctn: Number(it.nw_per_ctn) || 0, gw_per_ctn: Number(it.gw_per_ctn) || 0,
-        cbm_per_ctn: Number(it.cbm_per_ctn) || 0, price: Number(it.price) || 0
-      }));
+      const rawItems = items.map((it) => {
+        const pcs = Number(it.pcs_per_ctn) || 1;
+        const ctns = Number(it.moq) || 0;
+        const qty = ctns * pcs;
+        return {
+          name_en: it.name_en, model: it.model, hs_code: it.hs_code,
+          unit: it.unit, qty, ctns, pcs_per_ctn: pcs,
+          nw_per_ctn: Number(it.nw_per_ctn) || 0, gw_per_ctn: Number(it.gw_per_ctn) || 0,
+          cbm_per_ctn: Number(it.cbm_per_ctn) || 0, price: Number(it.price) || 0
+        };
+      });
       // 收集单据默认值所需上下文（企业抬头/客户/供应商）
       const [coRows] = await conn.query('SELECT name_cn, name_en, tel FROM company_settings LIMIT 1');
       const co = coRows[0] || {};
@@ -244,7 +254,7 @@ router.post(
       const cl = clRows[0] || {};
       const [suRows] = quote.supplier_id ? await conn.query('SELECT name FROM suppliers WHERE id = ?', [quote.supplier_id]) : [[]];
       const su = suRows[0] || {};
-      const docs = generateDefaultDocuments(piNumber, quote.quotation_date, '我司代办报关', rawItems, {
+      const docs = generateDefaultDocuments(piNumber, quote.quotation_date, customsResp, rawItems, {
         client_id: quote.client_id,
         company_name_cn: co.name_cn, company_name_en: co.name_en, company_tel: co.tel,
         client_name_en: cl.name_en,
@@ -325,7 +335,11 @@ router.post(
            WHERE quotation_number LIKE ? ORDER BY quotation_number DESC LIMIT 1`,
           [prefix + '-%']
         );
-        let seq = (row ? parseInt(row.quotation_number.match(/-(\d{3})$/)[1], 10) : 0) + 1;
+        let seq = 1;
+        if (row) {
+          const m = row.quotation_number.match(/-(\d{3})$/);
+          if (m) seq = parseInt(m[1], 10) + 1;
+        }
         data.quotation_number = prefix + '-' + String(seq).padStart(3, '0');
       }
     }
@@ -366,10 +380,12 @@ router.put(
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
-      const [r] = await conn.query('UPDATE quotations SET ? WHERE id = ?', [data, req.params.id]);
-      if (r.affectedRows === 0) {
-        await conn.rollback();
-        return res.fail('报价单不存在', 404);
+      if (Object.keys(data).length > 0) {
+        const [r] = await conn.query('UPDATE quotations SET ? WHERE id = ?', [data, req.params.id]);
+        if (r.affectedRows === 0) {
+          await conn.rollback();
+          return res.fail('报价单不存在', 404);
+        }
       }
       if (hasItems) {
         await conn.query('DELETE FROM quotation_items WHERE quotation_id = ?', [req.params.id]);
@@ -384,6 +400,7 @@ router.put(
       await conn.commit();
       res.success({ id: Number(req.params.id) }, '更新成功');
     } catch (e) {
+      console.error('[quotations PUT error]', e);
       await conn.rollback();
       throw e;
     } finally {

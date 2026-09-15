@@ -81,8 +81,9 @@
         </template>
         <el-menu-item index="/master/clients">客户管理</el-menu-item>
         <el-menu-item index="/master/products">产品数据库</el-menu-item>
+        <el-menu-item index="/master/hs-codes">HS编码库</el-menu-item>
         <el-menu-item index="/master/suppliers">供应商管理</el-menu-item>
-        <el-menu-item index="/master/bank-accounts">银行账户库</el-menu-item>
+
       </el-sub-menu>
 
       <!-- 系统管理：仅超级管理员可见（meta.permission=1） -->

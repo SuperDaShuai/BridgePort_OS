@@ -192,7 +192,11 @@ router.post(
            WHERE pi_number LIKE ? ORDER BY pi_number DESC LIMIT 1`,
           [prefix + '-%']
         );
-        let seq = (row ? parseInt(row.pi_number.match(/-(\d{3})$/)[1], 10) : 0) + 1;
+        let seq = 1;
+        if (row) {
+          const m = row.pi_number.match(/-(\d{3})$/);
+          if (m) seq = parseInt(m[1], 10) + 1;
+        }
         data.pi_number = prefix + '-' + String(seq).padStart(3, '0');
       }
     }
@@ -268,10 +272,12 @@ router.put(
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
-      const [r] = await conn.query('UPDATE orders SET ? WHERE id = ?', [data, req.params.id]);
-      if (r.affectedRows === 0) {
-        await conn.rollback();
-        return res.fail('订单不存在', 404);
+      if (Object.keys(data).length > 0) {
+        const [r] = await conn.query('UPDATE orders SET ? WHERE id = ?', [data, req.params.id]);
+        if (r.affectedRows === 0) {
+          await conn.rollback();
+          return res.fail('订单不存在', 404);
+        }
       }
       if (hasItems) {
         await conn.query('DELETE FROM order_items WHERE order_id = ?', [req.params.id]);

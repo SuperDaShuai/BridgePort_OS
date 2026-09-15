@@ -4,16 +4,16 @@ const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers'
 
 const router = express.Router();
 
-const ALLOWED = ['route_type', 'bank_name', 'account_number', 'swift_code', 'routing_note'];
-const REQUIRED = ['route_type', 'bank_name', 'account_number'];
+const ALLOWED = ['route_type', 'routing_note'];
+const REQUIRED = ['route_type'];
 
 router.get(
   '/',
   asyncHandler(async (req, res) => {
     const { page, pageSize, offset } = parsePagination(req);
     const q = (req.query.q || '').trim();
-    const where = q ? 'WHERE route_type LIKE ? OR bank_name LIKE ? OR account_number LIKE ?' : '';
-    const params = q ? [`%${q}%`, `%${q}%`, `%${q}%`] : [];
+    const where = q ? 'WHERE route_type LIKE ? OR routing_note LIKE ?' : '';
+    const params = q ? [`%${q}%`, `%${q}%`] : [];
 
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM bank_accounts ${where}`, params);
     const [rows] = await pool.query(

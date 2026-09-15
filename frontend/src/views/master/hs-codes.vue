@@ -4,25 +4,27 @@
     <div class="toolbar">
       <el-input
         v-model="query.q"
-        placeholder="搜索账户类型 / 银行 / 账号"
+        placeholder="搜索 HS编码 / 产品名称"
         clearable
-        style="width: 260px"
+        style="width: 240px"
         @keyup.enter="onSearch"
         @clear="onSearch"
       />
       <el-button :icon="Search" @click="onSearch">搜索</el-button>
       <div class="toolbar-right">
-        <el-button v-if="canEdit" type="primary" :icon="Plus" @click="openCreate">新增账户</el-button>
+        <el-button v-if="canEdit" type="primary" :icon="Plus" @click="openCreate">新增 HS 编码</el-button>
       </div>
     </div>
 
     <!-- 列表 -->
     <el-table v-loading="loading" :data="list" border stripe>
-      <el-table-column prop="route_type" label="账户类型" width="160" show-overflow-tooltip />
-      <el-table-column prop="bank_name" label="银行名称" min-width="220" show-overflow-tooltip />
-      <el-table-column prop="account_number" label="账号" width="200" show-overflow-tooltip />
-      <el-table-column prop="swift_code" label="SWIFT" width="160" />
-      <el-table-column prop="routing_note" label="路线备注" min-width="160" show-overflow-tooltip />
+      <el-table-column prop="hs_code" label="HS编码" width="140" />
+      <el-table-column prop="product_name" label="HS产品名称" min-width="220" show-overflow-tooltip />
+      <el-table-column label="申报要素" min-width="300">
+        <template #default="{ row }">
+          <div class="decl-text">{{ row.declaration_elements || '—' }}</div>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="160" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="info" @click="openView(row)">查看</el-button>
@@ -46,25 +48,25 @@
     <!-- 新增/编辑弹窗 -->
     <el-dialog
       v-model="dialogVisible"
-      :title="readonly ? '查看银行账户' : (form.id ? '编辑银行账户' : '新增银行账户')"
-      width="640px"
+      :title="readonly ? '查看 HS 编码' : (form.id ? '编辑 HS 编码' : '新增 HS 编码')"
+      width="680px"
       destroy-on-close
+      :close-on-click-modal="false"
     >
       <el-form ref="formRef" :model="form" :rules="rules" :disabled="readonly" label-width="100px">
-        <el-form-item label="账户类型" prop="route_type">
-          <el-input v-model="form.route_type" placeholder="USD 美元公账 / RMB 国内公账" />
+        <el-form-item label="HS编码" prop="hs_code">
+          <el-input v-model="form.hs_code" placeholder="如：85437099" maxlength="20" />
         </el-form-item>
-        <el-form-item label="银行名称" prop="bank_name">
-          <el-input v-model="form.bank_name" />
+        <el-form-item label="HS产品名称" prop="product_name">
+          <el-input v-model="form.product_name" placeholder="如：其他电气信号装置" />
         </el-form-item>
-        <el-form-item label="账号" prop="account_number">
-          <el-input v-model="form.account_number" />
-        </el-form-item>
-        <el-form-item label="SWIFT" prop="swift_code">
-          <el-input v-model="form.swift_code" placeholder="BKCHCNBJ920 / 对公付款" />
-        </el-form-item>
-        <el-form-item label="路线备注">
-          <el-input v-model="form.routing_note" type="textarea" :rows="2" />
+        <el-form-item label="申报要素" prop="declaration_elements">
+          <el-input
+            v-model="form.declaration_elements"
+            type="textarea"
+            :rows="8"
+            placeholder="1. 品名：&#10;2. 用途：&#10;3. 材质：&#10;4. 型号：&#10;5. 工作原理：&#10;6. 是否带电源装置："
+          />
         </el-form-item>
       </el-form>
 
@@ -80,7 +82,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
-import { listBankAccounts, createBankAccount, updateBankAccount, deleteBankAccount } from '@/api/bankAccounts'
+import { listHsCodes, getHsCode, createHsCode, updateHsCode, deleteHsCode } from '@/api/hsCodes'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
@@ -97,20 +99,18 @@ const readonly = ref(false)
 const formRef = ref()
 const form = ref({})
 const rules = {
-  route_type: [{ required: true, message: '请输入账户类型', trigger: 'blur' }],
-  bank_name: [{ required: true, message: '请输入银行名称', trigger: 'blur' }],
-  account_number: [{ required: true, message: '请输入账号', trigger: 'blur' }],
-  swift_code: [{ required: true, message: '请输入SWIFT编码', trigger: 'blur' }]
+  hs_code: [{ required: true, message: '请输入HS编码', trigger: 'blur' }],
+  product_name: [{ required: true, message: '请输入HS产品名称', trigger: 'blur' }]
 }
 
 const blankForm = () => ({
-  route_type: '', bank_name: '', account_number: '', swift_code: '', routing_note: ''
+  hs_code: '', product_name: '', declaration_elements: ''
 })
 
 async function loadList() {
   loading.value = true
   try {
-    const d = await listBankAccounts({ q: query.q, page: query.page, pageSize: query.pageSize })
+    const d = await listHsCodes({ q: query.q, page: query.page, pageSize: query.pageSize })
     list.value = d.list
     total.value = d.total
   } catch {
@@ -131,15 +131,15 @@ function openCreate() {
   dialogVisible.value = true
 }
 
-function openView(row) {
+async function openView(row) {
   readonly.value = true
-  form.value = { ...row }
+  form.value = { ...await getHsCode(row.id) }
   dialogVisible.value = true
 }
 
-function openEdit(row) {
+async function openEdit(row) {
   readonly.value = false
-  form.value = { ...row }
+  form.value = { ...await getHsCode(row.id) }
   dialogVisible.value = true
 }
 
@@ -149,10 +149,10 @@ async function onSave() {
   saving.value = true
   try {
     if (form.value.id) {
-      await updateBankAccount(form.value.id, form.value)
+      await updateHsCode(form.value.id, form.value)
       ElMessage.success('更新成功')
     } else {
-      await createBankAccount(form.value)
+      await createHsCode(form.value)
       ElMessage.success('创建成功')
     }
     dialogVisible.value = false
@@ -166,19 +166,28 @@ async function onSave() {
 
 async function onDelete(row) {
   const ok = await ElMessageBox.confirm(
-    `确认删除账户「${row.bank_name} ${row.account_number}」？`,
+    `确认删除 HS编码「${row.hs_code}」？`,
     '删除确认',
     { type: 'warning' }
   ).catch(() => false)
   if (!ok) return
   try {
-    await deleteBankAccount(row.id)
+    await deleteHsCode(row.id)
     ElMessage.success('删除成功')
   } catch {
-    /* 拦截器已提示（被收款流水引用时后端返回 409） */
+    /* 拦截器已提示 */
   }
   loadList()
 }
 
 onMounted(loadList)
 </script>
+
+<style scoped>
+.decl-text {
+  font-size: 12px;
+  color: #606266;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+</style>

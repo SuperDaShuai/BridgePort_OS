@@ -1,10 +1,10 @@
-﻿﻿﻿﻿<template>
+<template>
   <el-card shadow="never" class="page-card">
     <!-- 工具栏 -->
     <div class="toolbar">
       <el-input
         v-model="query.q"
-        placeholder="搜索型号 / 品名 / HS编码"
+        placeholder="搜索型号 / 中英文品名 / HS编码"
         clearable
         style="width: 240px"
         @keyup.enter="onSearch"
@@ -45,10 +45,15 @@
           <span v-else style="color: #c0c4cc">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="型号 / 供应商" width="150" show-overflow-tooltip>
+      <el-table-column label="我司型号 / 供应商" width="150" show-overflow-tooltip>
         <template #default="{ row }">
-          <strong>{{ row.model }}</strong>
+          <strong>{{ row.our_model || row.model }}</strong>
           <div style="font-size: 11px; color: #909399; margin-top: 2px">{{ row.supplier_name || '未绑定' }}</div>
+        </template>
+      </el-table-column>
+      <el-table-column label="中文品名" prop="name_cn" width="130" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.name_cn || '—' }}
         </template>
       </el-table-column>
       <el-table-column label="英文品名与规格" min-width="220" show-overflow-tooltip>
@@ -76,7 +81,7 @@
         </template>
       </el-table-column>
       <el-table-column prop="purchase_cost_rmb" label="采购价(¥)" width="100" align="right" />
-      <el-table-column prop="export_price_usd" label="外销价($)" width="100" align="right" />
+      <el-table-column prop="export_price_usd" label="外销价(¥)" width="100" align="right" />
       <el-table-column label="操作" width="160" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="info" @click="openView(row)">查看</el-button>
@@ -103,6 +108,7 @@
       :title="readonly ? '查看产品' : (form.id ? '编辑产品' : '新增产品')"
       width="860px"
       destroy-on-close
+      :close-on-click-modal="false"
     >
       <el-form ref="formRef" :model="form" :rules="rules" :disabled="readonly" label-width="100px">
         <el-divider content-position="left">基本信息</el-divider>
@@ -110,6 +116,11 @@
           <el-col :span="8">
             <el-form-item label="型号" prop="model">
               <el-input v-model="form.model" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="我司型号">
+              <el-input v-model="form.our_model" placeholder="我司内部型号" />
             </el-form-item>
           </el-col>
           <el-col :span="8">
@@ -127,6 +138,11 @@
                   :value="s.id"
                 />
               </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="中文品名" prop="name_cn">
+              <el-input v-model="form.name_cn" placeholder="产品中文名称" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -237,7 +253,7 @@
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="外销价($)">
+            <el-form-item label="外销价(¥)">
               <el-input-number v-model="form.export_price_usd" :min="0" :controls="false" style="width: 100%" />
             </el-form-item>
           </el-col>
@@ -311,7 +327,7 @@ const NUMERIC_FIELDS = [
 ]
 
 const blankForm = () => ({
-  model: '', hs_code: '', supplier_id: null, name_en: '', spec: '', img_url: '',
+  model: '', our_model: '', hs_code: '', supplier_id: null, name_cn: '', name_en: '', spec: '', img_url: '',
   ...Object.fromEntries(NUMERIC_FIELDS.map((k) => [k, undefined]))
 })
 

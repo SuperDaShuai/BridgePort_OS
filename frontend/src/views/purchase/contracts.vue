@@ -1,4 +1,4 @@
-﻿﻿﻿﻿<template>
+<template>
   <el-card shadow="never" class="page-card">
     <!-- 页面标题 -->
     <div class="page-header">

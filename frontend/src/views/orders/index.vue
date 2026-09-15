@@ -132,11 +132,19 @@
         <div class="form-grid-4">
           <el-form-item label="收款银行账户">
             <el-select v-model="form.bank_account_id" filterable clearable placeholder="选择收款账户" style="width: 100%">
-              <el-option v-for="b in bankOptions" :key="b.id" :label="`${b.bank_name} (${b.route_type})`" :value="b.id" />
+              <el-option v-for="b in bankOptions" :key="b.id" :label="b.route_type" :value="b.id" />
             </el-select>
           </el-form-item>
           <el-form-item label="付款方式">
-            <el-input v-model="form.payment_terms" placeholder="如: 30% T/T 定金, 70% 见提单副本" />
+            <el-select
+              v-model="form.payment_terms"
+              filterable allow-create clearable
+              default-first-option
+              placeholder="选择或输入付款方式"
+              style="width: 100%"
+            >
+              <el-option v-for="t in paymentTermOptions" :key="t.id" :label="t.term_text" :value="t.term_text" />
+            </el-select>
           </el-form-item>
           <el-form-item label="起运港">
             <el-input v-model="form.loading_port" placeholder="如: Ningbo, China" />
@@ -200,14 +208,17 @@
               <el-input-number v-model="row.qty" :min="0" :controls="false" size="small" readonly style="width: 100%" />
             </template>
           </el-table-column>
-          <el-table-column label="单价" width="110" align="center">
+          <el-table-column :label="`单价(${priceSign})`" width="120" align="center">
+            <template #header>
+              <span style="cursor:pointer; user-select:none" @click="togglePriceCurrency">单价({{ priceSign }}) ⇄</span>
+            </template>
             <template #default="{ row }">
               <el-input-number v-model="row.price" :min="0" :step="0.01" :controls="false" size="small" style="width: 100%" @change="calcRow(row)" />
             </template>
           </el-table-column>
-          <el-table-column label="总价" width="110" align="right">
+          <el-table-column :label="`总价(${priceSign})`" width="110" align="right">
             <template #default="{ row }">
-              <span class="subtotal">${{ formatMoney(row.subtotal_amount) }}</span>
+              <span class="subtotal">{{ priceSign }}{{ formatMoney(row.subtotal_amount) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="50" align="center" fixed="right">
@@ -219,7 +230,7 @@
 
         <div class="total-bar">
           <span>订单外销总额：</span>
-          <span class="total-amount">${{ formatMoney(orderTotal) }}</span>
+          <span class="total-amount">{{ priceSign }}{{ formatMoney(orderTotal) }}</span>
         </div>
       </el-form>
 
@@ -264,6 +275,7 @@ import { listClients } from '@/api/clients'
 import { listProducts } from '@/api/products'
 import { listSuppliers } from '@/api/suppliers'
 import { listBankAccounts } from '@/api/bankAccounts'
+import { listPaymentTerms } from '@/api/paymentTerms'
 import { getCompanySettings } from '@/api/companySettings'
 
 const STATUSES = ['PI确认', '生产中', '已发货', '已到港', '已签收', '已完成']
@@ -277,8 +289,13 @@ const clientOptions = ref([])
 const productOptions = ref([])
 const supplierOptions = ref([])
 const bankOptions = ref([])
+const paymentTermOptions = ref([])
 const companySettings = ref({})
 const query = reactive({ q: '', status: '', page: 1, pageSize: 10 })
+
+// 明细单价币种切换：默认人民币，点击列头在 ¥/$ 间切换
+const priceCurrency = ref('RMB') // 'RMB' 或 'USD'
+const priceSign = computed(() => priceCurrency.value === 'RMB' ? '¥' : '$')
 
 const dialogVisible = ref(false)
 const formRef = ref()
@@ -309,7 +326,7 @@ const blankForm = () => ({
 const blankItem = () => ({
   product_id: null, model: '', name_en: '', hs_code: '', unit: '',
   img_url: '', spec: '', pcs_per_ctn: 1, ctns: 0, qty: 0,
-  price: undefined, subtotal_amount: 0,
+  price: undefined, price_rmb: undefined, subtotal_amount: 0,
   nw_per_ctn: null, gw_per_ctn: null, cbm_per_ctn: null
 })
 
@@ -369,17 +386,19 @@ async function loadList() {
 
 async function loadOptions() {
   try {
-    const [c, p, s, b, co] = await Promise.all([
+    const [c, p, s, b, t, co] = await Promise.all([
       listClients({ page: 1, pageSize: 500 }),
       listProducts({ page: 1, pageSize: 500 }),
       listSuppliers({ page: 1, pageSize: 500 }),
       listBankAccounts({ page: 1, pageSize: 500 }),
+      listPaymentTerms().catch(() => ({ list: [] })),
       getCompanySettings()
     ])
     clientOptions.value = c.list
     productOptions.value = p.list
     supplierOptions.value = s.list
     bankOptions.value = b.list
+    paymentTermOptions.value = t.list || []
     companySettings.value = co || {}
   } catch { /* 拦截器 */ }
 }
@@ -398,10 +417,18 @@ function onProductPick(row, productId) {
   row.hs_code = p.hs_code; row.unit = p.unit || '台'; row.img_url = p.img_url || ''
   row.pcs_per_ctn = p.pcs_per_ctn ?? 1
   row.nw_per_ctn = p.net_weight_kg ?? null; row.gw_per_ctn = p.gross_weight_kg ?? null
-  row.cbm_per_ctn = p.ctn_cbm ?? null; row.price = p.export_price_usd ?? undefined
+  row.cbm_per_ctn = p.ctn_cbm ?? null
+  // 以产品数据库的人民币外销价为基准，USD 模式下派生显示
+  row.price_rmb = p.export_price_usd ?? undefined
+  if (row.price_rmb != null && priceCurrency.value === 'USD') {
+    const usdRate = Number(companySettings.value.default_usd_rate) || 7.2
+    row.price = Number((row.price_rmb / usdRate).toFixed(2))
+  } else {
+    row.price = row.price_rmb
+  }
   row.ctns = 1
+  // Specification（产品英文名已在标题列以粗体单独展示，不再写入 spec 避免重复）
   const specLines = []
-  specLines.push(p.name_en || p.model)
   if (p.spec) specLines.push(p.spec)
   if (p.hs_code) specLines.push('HS: ' + p.hs_code)
   row.spec = specLines.join('\n')
@@ -410,26 +437,59 @@ function onProductPick(row, productId) {
 function calcRow(row) {
   const pcs = Number(row.pcs_per_ctn) || 0
   const ctns = Number(row.ctns) || 0
-  const price = Number(row.price) || 0
+  // 手动改了单价 → 同步回基准 RMB 价
+  const p = Number(row.price) || 0
+  if (p > 0) {
+    if (priceCurrency.value === 'RMB') {
+      row.price_rmb = p
+    } else {
+      const usdRate = Number(companySettings.value.default_usd_rate) || 7.2
+      row.price_rmb = Number((p * usdRate).toFixed(2))
+    }
+  }
   row.qty = pcs * ctns
-  row.subtotal_amount = Number((row.qty * price).toFixed(2))
+  row.subtotal_amount = Number((row.qty * p).toFixed(2))
+}
+
+// 切换明细单价币种：人民币 ↔ 美元
+// 始终以 price_rmb（产品数据库的人民币外销价）为基准派生，不做反向乘回，消除精度漂移
+function togglePriceCurrency() {
+  const usdRate = Number(companySettings.value.default_usd_rate) || 7.2
+  const to = priceCurrency.value === 'RMB' ? 'USD' : 'RMB'
+  ;(form.value.items || []).forEach((it) => {
+    const rmb = Number(it.price_rmb) || 0
+    if (rmb <= 0) return
+    it.price = to === 'RMB' ? rmb : Number((rmb / usdRate).toFixed(2))
+    const p = Number(it.price) || 0
+    it.subtotal_amount = Number(((Number(it.qty) || 0) * p).toFixed(2))
+  })
+  priceCurrency.value = to
 }
 function addItemRow() { form.value.items.push(blankItem()) }
 function onSearch() { query.page = 1; loadList() }
 
 async function openCreate() {
   form.value = blankForm()
+  priceCurrency.value = 'RMB'
   try { form.value.pi_number = await getNextOrderNumber() } catch {}
   form.value.signing_date = new Date().toISOString().slice(0, 10)
-  form.value.payment_terms = companySettings.value.payment_terms_template || '30% T/T Deposit, 70% Against B/L Copy'
+  form.value.payment_terms =
+    paymentTermOptions.value.find((t) => t.is_default)?.term_text
+    || companySettings.value.payment_terms_template
+    || '30% T/T Deposit, 70% Against B/L Copy'
   addItemRow(); dialogVisible.value = true
 }
 
 async function openEdit(row) {
   const detail = await getOrder(row.id)
+  priceCurrency.value = 'RMB' // 编辑时默认人民币显示，用户可点击切换
   detail.show_special_req = !!detail.show_special_req
   detail.show_stamp = !!detail.show_stamp
-  detail.items = (detail.items || []).map(it => ({ ...it, subtotal_amount: Number(it.subtotal_amount) || 0 }))
+  detail.items = (detail.items || []).map(it => ({
+    ...it,
+    price_rmb: it.price_rmb ?? it.price ?? undefined, // 已存订单以 price 为 RMB 基准
+    subtotal_amount: Number(it.subtotal_amount) || 0
+  }))
   form.value = detail
   dialogVisible.value = true
 }
@@ -465,6 +525,11 @@ async function onDelete(row) {
 /* ========== PI 生成 ========== */
 async function openPi(row) {
   const detail = await getOrder(row.id)
+  // 每次打开 PI 都重新拉企业配置，确保签章等最新值（企业配置页保存后订单页缓存不会自动刷新）
+  try {
+    const fresh = await getCompanySettings()
+    companySettings.value = fresh || companySettings.value
+  } catch { /* 忽略，用已有缓存 */ }
   piData.value = detail
   await nextTick()
   piHtml.value = buildPiHtml(detail)
@@ -482,14 +547,14 @@ function buildPiHtml(order) {
 
   // 公司抬头
   const header = `
-    <div style="padding-bottom:10px; display:flex; justify-content:space-between; align-items:flex-start;">
-      <div>
-        <h1 style="font-size:18px; font-weight:900; text-transform:uppercase; letter-spacing:0.5px; color:#0f172a;">${company.name_en || 'SELLER COMPANY'}</h1>
-        <p style="font-size:12px; font-weight:bold; color:#334155;">${company.name_cn || ''}</p>
-        <p style="font-size:10px; color:#64748b; margin-top:2px;">${company.address_en || ''}</p>
-        <p style="font-size:10px; color:#64748b;">TEL: ${company.tel || ''} | EMAIL: ${company.email || ''}</p>
+    <div style="padding-bottom:6px; display:flex; justify-content:space-between; align-items:flex-start;">
+      <div style="line-height:1.35;">
+        <h1 style="font-size:18px; font-weight:900; text-transform:uppercase; letter-spacing:0.5px; color:#0f172a; margin:0;">${company.name_en || 'SELLER COMPANY'}</h1>
+        <p style="font-size:12px; font-weight:bold; color:#334155; margin:2px 0 0;">${company.name_cn || ''}</p>
+        <p style="font-size:10px; color:#64748b; margin:1px 0 0;">${company.address_en || ''}</p>
+        <p style="font-size:10px; color:#64748b; margin:1px 0 0;">TEL: ${company.tel || ''} | EMAIL: ${company.email || ''}</p>
       </div>
-      <div style="text-align:right; font-size:10px; color:#64748b;">
+      <div style="text-align:right; font-size:10px; color:#64748b; line-height:1.5;">
         <div>DATE: ${order.signing_date || ''}</div>
         <div>REF: ${order.pi_number || ''}</div>
       </div>
@@ -498,12 +563,14 @@ function buildPiHtml(order) {
   `
 
   // BUYER + PI INFO 双栏
+  const buyerAddress = client.address_en || client.address || ''
+  const buyerContact = [client.email ? 'Email: ' + client.email : '', client.tel ? 'Tel: ' + client.tel : ''].filter(Boolean).join(' ')
   const buyerBox = `
-    <div style="border:1px solid #cbd5e1; padding:8px; border-radius:4px;">
+    <div style="border:1px solid #cbd5e1; padding:8px; border-radius:4px; line-height:1.6;">
       <strong>BUYER / CONSIGNEE:</strong><br>
-      <strong>${client.name_en || client.name || ''}</strong><br>
-      ${client.address_en || client.address || ''}<br>
-      ${client.email ? 'Email: ' + client.email : ''} ${client.tel ? 'Tel: ' + client.tel : ''}
+      <strong>${client.name_en || client.name || ''}</strong>
+      ${buyerAddress ? `<br><span style="white-space:pre-wrap;">${buyerAddress}</span>` : ''}
+      ${buyerContact ? `<br>${buyerContact}` : ''}
     </div>
   `
   const piInfoBox = `
@@ -519,6 +586,16 @@ function buildPiHtml(order) {
   // 明细表格
   const itemsRows = (order.items || []).map((it, idx) => {
     const qty = Number(it.qty || 0), price = Number(it.price || 0)
+    // 剥离 spec 快照中的 HS 行与与产品英文名重复的行（兼容历史数据）
+    const specRaw = it.spec ? String(it.spec) : ''
+    const specHsMatch = specRaw.match(/HS\s*[:：]\s*([A-Za-z0-9.]+)/i)
+    const nameEn = (it.name_en || '').trim().toLowerCase()
+    const specClean = specRaw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => s && !/^HS\s*[:：]/i.test(s) && (!nameEn || s.toLowerCase() !== nameEn))
+      .join('\n')
+    const hsCode = it.hs_code || (specHsMatch ? specHsMatch[1] : '')
     return `
       <tr>
         <td style="text-align:center;">${idx + 1}</td>
@@ -526,7 +603,8 @@ function buildPiHtml(order) {
         <td style="text-align:center; padding:4px;">${it.img_url ? `<img src="${it.img_url}" style="width:80px;height:80px;object-fit:contain;display:block;margin:0 auto;">` : '-'}</td>
         <td style="line-height:1.4;">
           <strong>${it.name_en || ''}</strong>
-          ${it.spec ? `<br><span style="font-size:9.5px; color:#475569; white-space:pre-wrap;">${it.spec}</span>` : ''}
+          ${specClean ? `<br><span style="font-size:9.5px; color:#475569; white-space:pre-wrap;">${specClean}</span>` : ''}
+          ${hsCode ? `<br><span style="font-size:9px; color:#94a3b8;">HS: ${hsCode}</span>` : ''}
         </td>
         <td style="text-align:center;">${it.pcs_per_ctn || ''}</td>
         <td style="text-align:center;">${it.ctns || ''}</td>
@@ -538,13 +616,13 @@ function buildPiHtml(order) {
   }).join('')
 
   const totalsRow = `
-    <tfoot><tr style="font-weight:bold; background:#f8fafc;">
+    <tr style="font-weight:bold; background:#f8fafc;">
       <td colspan="5" style="text-align:right;">TOTAL:</td>
       <td style="text-align:center;">${totals.ctns}</td>
       <td style="text-align:right;">${totals.qty}</td>
       <td></td>
       <td style="text-align:right; color:#059669;">${currSign}${formatMoney(totals.amount)}</td>
-    </tr></tfoot>
+    </tr>
   `
 
   const table = `
@@ -560,8 +638,7 @@ function buildPiHtml(order) {
         <th style="width:10%; text-align:center;">Price</th>
         <th style="width:12%; text-align:center;">Amount</th>
       </tr></thead>
-      <tbody>${itemsRows}</tbody>
-      ${totalsRow}
+      <tbody>${itemsRows}${totalsRow}</tbody>
     </table>
   `
 
@@ -602,6 +679,13 @@ function buildPiHtml(order) {
     </div>
   `
 
+  // ARBITRATION AWARD CLAUSE（冲裁条款，位于银行信息与仲裁条款之间）
+  const awardClause = company.award_clause ? `
+    <div style="margin-top:12px; font-size:9.5px; color:#475569; line-height:1.5;">
+      <strong>ARBITRATION AWARD CLAUSE:</strong><br>${company.award_clause}
+    </div>
+  ` : ''
+
   // ARBITRATION CLAUSE
   const arbitration = company.arbitration_clause ? `
     <div style="margin-top:12px; font-size:9.5px; color:#475569; line-height:1.4;">
@@ -609,9 +693,9 @@ function buildPiHtml(order) {
     </div>
   ` : ''
 
-  // 签章区（带电子签章 / 不带）
+  // 签章区：优先企业配置上传的 seal_img（base64），无则回退 public/seal.png 静态文件
   const signHtml = order.show_stamp
-    ? `<div style="margin-top:8px; display:inline-block; border:2px solid #ef4444; color:#ef4444; padding:6px 14px; border-radius:4px; font-weight:bold; transform:rotate(-3deg); font-size:12px;">★ ${(company.name_en || 'SELLER').toUpperCase().substring(0, 20)} ★<br><span style="font-size:9px;">AUTHORIZED SIGNATURE</span></div>`
+    ? `<img src="${company.seal_img || '/seal.png'}" style="max-width:220px; max-height:130px; display:block; margin-top:4px;" alt="SEAL" />`
     : `<div style="margin-top:35px; border-bottom:1px solid #94a3b8; width:180px; display:inline-block;"></div><p style="margin-top:4px; color:#64748b; font-size:9px;">Authorized Signature & Chop</p>`
 
   const signatures = `
@@ -630,7 +714,7 @@ function buildPiHtml(order) {
 
   return header +
     `<div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:12px; font-size:11px;">${buyerBox}${piInfoBox}</div>` +
-    table + sayTotal + totalStats + specialReq + bankHtml + arbitration + signatures
+    table + sayTotal + totalStats + specialReq + bankHtml + awardClause + arbitration + signatures
 }
 
 function onPrint() {
@@ -640,16 +724,19 @@ function onPrint() {
     <html><head><meta charset="utf-8">
     <title>PROFORMA INVOICE - ${piData.value?.pi_number || ''}</title>
     <style>
-      body { font-family: Arial, sans-serif; }
-      .doc-page { padding: 35px 40px; font-size: 11px; color: #0f172a; line-height: 1.5; }
-      .doc-page table { font-size: 11px; margin: 10px 0; width: 100%; border-collapse: collapse; }
-      .doc-page th, .doc-page td { border: 1px solid #cbd5e1; padding: 6px 8px; }
+      @page { margin: 12mm 10mm; }
+      * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      body { margin: 0; font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', Arial, sans-serif; color: #0f172a; }
+      .doc-page { padding: 0; font-size: 11px; color: #0f172a; line-height: 1.5; }
+      .doc-page table { font-size: 11px; margin: 10px 0; width: 100%; border-collapse: collapse; border: 1px solid #cbd5e1; }
+      .doc-page th, .doc-page td { border: 1px solid #cbd5e1; padding: 6px 8px; vertical-align: middle; }
       .doc-page th { background: #f8fafc; }
+      .doc-page tr { page-break-inside: avoid; }
       .doc-badge-title { font-size: 15pt; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: #0f172a; }
       .doc-title-section { text-align: center; margin: 12px 0; padding: 8px 0; border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a; }
       img { max-width: 100%; }
       @media print { body { margin: 0; } }
-    </style></head><body>${piHtml.value}</body></html>
+    </style></head><body><div class="doc-page">${piHtml.value}</div></body></html>
   `)
   win.document.close()
   win.focus()
@@ -686,8 +773,8 @@ onMounted(() => { loadList(); loadOptions() })
 /* ======== PI 预览样式 ======== */
 .pi-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
 .doc-page { background: white; padding: 35px 40px; font-size: 11px; color: #0f172a; line-height: 1.5; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-.doc-page table { font-size: 11px; margin: 10px 0; width: 100%; border-collapse: collapse; }
-.doc-page th, .doc-page td { border: 1px solid #cbd5e1; padding: 6px 8px; }
+.doc-page table { font-size: 11px; margin: 10px 0; width: 100%; border-collapse: collapse; border: 1px solid #cbd5e1; }
+.doc-page th, .doc-page td { border: 1px solid #cbd5e1; padding: 6px 8px; vertical-align: middle; }
 .doc-page th { background: #f8fafc; }
 .doc-badge-title { font-size: 15pt; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: #0f172a; }
 .doc-title-section { text-align: center; margin: 12px 0; padding: 8px 0; border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a; }

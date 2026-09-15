@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿<template>
+<template>
   <el-card shadow="never" class="page-card">
     <!-- 工具栏 -->
     <div class="toolbar">
@@ -162,7 +162,15 @@
             <el-input v-model="form.lead_time" placeholder="如: 25-30 days after deposit" />
           </el-form-item>
           <el-form-item label="付款方式">
-            <el-input v-model="form.payment_terms" placeholder="如: 30% T/T Deposit, 70% Before Shipment" />
+            <el-select
+              v-model="form.payment_terms"
+              filterable allow-create clearable
+              default-first-option
+              placeholder="选择或输入付款方式"
+              style="width: 100%"
+            >
+              <el-option v-for="t in paymentTermOptions" :key="t.id" :label="t.term_text" :value="t.term_text" />
+            </el-select>
           </el-form-item>
           <el-form-item label="装运港口">
             <el-input v-model="form.loading_port" placeholder="如: Ningbo, China" />
@@ -241,7 +249,7 @@
               />
             </template>
           </el-table-column>
-          <el-table-column label="MOQ" width="90" align="center">
+          <el-table-column label="数量(箱)" width="95" align="center">
             <template #default="{ row }">
               <el-input-number
                 v-model="row.moq"
@@ -249,10 +257,11 @@
                 :controls="false"
                 size="small"
                 style="width: 100%"
+                @change="calcQuoteRow(row)"
               />
             </template>
           </el-table-column>
-          <el-table-column label="Price" width="110" align="center">
+          <el-table-column label="单价" width="100" align="center">
             <template #default="{ row }">
               <el-input-number
                 v-model="row.price"
@@ -261,18 +270,18 @@
                 :controls="false"
                 size="small"
                 style="width: 100%"
+                @change="calcQuoteRow(row)"
               />
             </template>
           </el-table-column>
 
-          
-
-          <el-table-column label="Load Quantity" width="140" align="center">
+          <el-table-column label="合计" width="160" align="center">
             <template #default="{ row }">
-              <div class="load-qty" v-if="row.est_qty_20gp || row.est_qty_40gp || row.est_qty_40hq">
-                <div v-if="row.est_qty_20gp" class="lq-line">20GP: {{ row.est_qty_20gp.toLocaleString() }} PCS</div>
-                <div v-if="row.est_qty_40gp" class="lq-line">40GP: {{ row.est_qty_40gp.toLocaleString() }} PCS</div>
-                <div v-if="row.est_qty_40hq" class="lq-line">40HQ: {{ row.est_qty_40hq.toLocaleString() }} PCS</div>
+              <div class="calc-info" v-if="row.moq && row.pcs_per_ctn">
+                <div class="ci-line"><span class="ci-label">数量:</span> {{ (row.moq * row.pcs_per_ctn).toLocaleString() }} PCS</div>
+                <div class="ci-line"><span class="ci-label">金额:</span> {{ row.currency || form.currency === 'RMB' ? '¥' : '$' }}{{ formatMoney((row.moq || 0) * (row.pcs_per_ctn || 0) * (row.price || 0)) }}</div>
+                <div class="ci-line"><span class="ci-label">毛重:</span> {{ ((row.moq || 0) * (row.gw_per_ctn || 0)).toFixed(1) }} kg</div>
+                <div class="ci-line"><span class="ci-label">体积:</span> {{ ((row.moq || 0) * (row.cbm_per_ctn || 0)).toFixed(3) }} cbm</div>
               </div>
               <div v-else class="load-qty-empty">—</div>
             </template>
@@ -324,6 +333,27 @@
         <el-button @click="previewVisible = false">关 闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- ========== 转 PI：报关责任选择确认框 ========== -->
+    <el-dialog v-model="piDialogVisible" title="转 PI 确认" width="500px" append-to-body>
+      <div style="margin-bottom:14px; line-height:1.7;">
+        将报价单 <strong>{{ piTarget?.quotation_number }}</strong> 转为正式 PI，请选择报关责任方：
+      </div>
+      <el-radio-group v-model="piCustomsResp" class="pi-customs-group">
+        <el-radio value="我司代办报关" border class="pi-customs-radio">
+          我司代办报关
+          <div class="pi-radio-desc">我司负责出口报关：自动生成出口报关草单与目的港清关三单（Invoice / Sales Contract / Packing List），订单进入关务流程。</div>
+        </el-radio>
+        <el-radio value="客户自行报关" border class="pi-customs-radio">
+          客户自行报关
+          <div class="pi-radio-desc">客户自行安排报关：不生成报关草单与清关资料，该订单不会出现在「出口报关单要素」列表中。</div>
+        </el-radio>
+      </el-radio-group>
+      <template #footer>
+        <el-button @click="piDialogVisible = false">取 消</el-button>
+        <el-button type="warning" :loading="converting" @click="confirmConvertToPi">确认转 PI</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -340,6 +370,7 @@ import { listClients } from '@/api/clients'
 import { listProducts } from '@/api/products'
 import { listSuppliers } from '@/api/suppliers'
 import { getCompanySettings } from '@/api/companySettings'
+import { listPaymentTerms } from '@/api/paymentTerms'
 
 const router = useRouter()
 
@@ -357,6 +388,7 @@ const total = ref(0)
 const clientOptions = ref([])
 const productOptions = ref([])
 const supplierOptions = ref([])
+const paymentTermOptions = ref([])
 const companySettings = ref({})
 const query = reactive({ q: '', status: '', page: 1, pageSize: 10 })
 
@@ -413,16 +445,18 @@ async function loadList() {
 
 async function loadOptions() {
   try {
-    const [c, p, s, co] = await Promise.all([
+    const [c, p, s, co, t] = await Promise.all([
       listClients({ page: 1, pageSize: 500 }),
       listProducts({ page: 1, pageSize: 500 }),
       listSuppliers({ page: 1, pageSize: 500 }),
-      getCompanySettings().catch(() => ({}))
+      getCompanySettings().catch(() => ({})),
+      listPaymentTerms().catch(() => ({ list: [] }))
     ])
     clientOptions.value = c.list
     productOptions.value = p.list
     supplierOptions.value = s.list
     companySettings.value = co || {}
+    paymentTermOptions.value = t.list || []
   } catch { /* 拦截器已提示 */ }
 }
 
@@ -462,12 +496,14 @@ function onProductPick(row, productId) {
   row.est_qty_40gp = p.est_qty_40gp ?? null
   row.est_qty_40hq = p.est_qty_40hq ?? null
 
-  // 价格快照（MOQ 不关联产品字段，留空由用户手动填写）
+  // 价格快照
   row.price = p.export_price_usd ?? undefined
+  // 数量(箱) 默认 1 箱
+  if (!row.moq) row.moq = 1
+  calcQuoteRow(row)
 
-  // Specification 多行框（换行格式）
+  // Specification 多行框（产品英文名已在标题列以粗体单独展示，不再写入 spec 避免重复）
   const specLines = []
-  specLines.push(p.name_en || p.model)
   if (p.spec) specLines.push(p.spec)
   if (p.hs_code) specLines.push('HS: ' + p.hs_code)
   row.spec = specLines.join('\n')
@@ -476,7 +512,7 @@ function onProductPick(row, productId) {
   const packingLines = []
   if (p.pcs_per_ctn) packingLines.push(p.pcs_per_ctn + ' PCS/CTN')
   if (p.ctn_length && p.ctn_width && p.ctn_height) {
-    packingLines.push(`外箱: ${p.ctn_length}x${p.ctn_width}x${p.ctn_height} cm`)
+    packingLines.push(`CTNS: ${p.ctn_length}x${p.ctn_width}x${p.ctn_height} cm`)
   }
   if (p.net_weight_kg || p.gross_weight_kg) {
     const parts = []
@@ -489,6 +525,13 @@ function onProductPick(row, productId) {
 
 function addItemRow() {
   form.value.items.push(blankItem())
+}
+
+// 报价行计算：moq(箱数) × pcs_per_ctn = 总数量, 总数量 × price = 金额
+function calcQuoteRow(row) {
+  // 触发响应式更新即可，合计列在模板里直接计算
+  // 这里可做额外校验（如最小箱数等），目前只需触发刷新
+  return row
 }
 
 function onSearch() { query.page = 1; loadList() }
@@ -507,9 +550,12 @@ async function openCreate() {
   form.value.valid_until = d.toISOString().slice(0, 10)
   // 默认装运港
   form.value.loading_port = 'Ningbo, China'
-  // 默认交货周期 / 付款方式
+  // 默认交货周期 / 付款方式（取付款方式字典默认项）
   form.value.lead_time = '25-30 days after deposit'
-  form.value.payment_terms = '30% T/T Deposit, 70% Before Shipment'
+  form.value.payment_terms =
+    paymentTermOptions.value.find((t) => t.is_default)?.term_text
+    || companySettings.value.payment_terms_template
+    || '30% T/T Deposit, 70% Before Shipment'
   form.value.remark = 'REMARK: \n1. Prices are FOB Ningbo, China.\n2. Validity: 30 days from date of quotation.\n3. Lead time: 25-30 days after deposit received.\n4. Payment: 30% T/T deposit, 70% before shipment.\n5. Packing: standard neutral export cartons.\n6. All specifications are subject to final confirmation.'
   addItemRow()
   dialogVisible.value = true
@@ -530,8 +576,12 @@ async function onSave() {
     ElMessage.warning('请至少添加一行产品明细（需选择产品并填写单价）')
     return
   }
-  // 计算总金额
-  form.value.total_amount = items.reduce((s, it) => s + (it.price || 0) * (it.moq || 0), 0)
+  // 计算总金额：moq(箱数) × pcs_per_ctn(件/箱) × price(单价)
+  form.value.total_amount = items.reduce((s, it) => {
+    const ctns = Number(it.moq) || 0
+    const pcs = Number(it.pcs_per_ctn) || 0
+    return s + ctns * pcs * (Number(it.price) || 0)
+  }, 0)
 
   saving.value = true
   try {
@@ -578,17 +628,25 @@ function buildQuoteHtml(q) {
   const client = clientOptions.value.find(c => c.id === q.client_id) || {}
   const currSign = q.currency === 'RMB' ? '¥' : '$'
   const items = q.items || []
-  const total = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.moq) || 0), 0)
+  const total = items.reduce((s, it) => {
+    const ctns = Number(it.moq) || 0
+    const pcs = Number(it.pcs_per_ctn) || 0
+    return s + ctns * pcs * (Number(it.price) || 0)
+  }, 0)
+  const totalCtns = items.reduce((s, it) => s + (Number(it.moq) || 0), 0)
+  const totalQty = items.reduce((s, it) => s + (Number(it.moq) || 0) * (Number(it.pcs_per_ctn) || 0), 0)
+  const totalGw = items.reduce((s, it) => s + (Number(it.moq) || 0) * (Number(it.gw_per_ctn) || 0), 0)
+  const totalCbm = items.reduce((s, it) => s + (Number(it.moq) || 0) * (Number(it.cbm_per_ctn) || 0), 0)
 
   const header = `
-    <div style="padding-bottom:10px; display:flex; justify-content:space-between; align-items:flex-start;">
-      <div>
-        <h1 style="font-size:18px; font-weight:900; text-transform:uppercase; letter-spacing:0.5px; color:#0f172a;">${company.name_en || 'SELLER COMPANY'}</h1>
-        <p style="font-size:12px; font-weight:bold; color:#334155;">${company.name_cn || ''}</p>
-        <p style="font-size:10px; color:#64748b; margin-top:2px;">${company.address_en || ''}</p>
-        <p style="font-size:10px; color:#64748b;">TEL: ${company.tel || ''} | EMAIL: ${company.email || ''}</p>
+    <div style="padding-bottom:6px; display:flex; justify-content:space-between; align-items:flex-start;">
+      <div style="line-height:1.35;">
+        <h1 style="font-size:18px; font-weight:900; text-transform:uppercase; letter-spacing:0.5px; color:#0f172a; margin:0;">${company.name_en || 'SELLER COMPANY'}</h1>
+        <p style="font-size:12px; font-weight:bold; color:#334155; margin:2px 0 0;">${company.name_cn || ''}</p>
+        <p style="font-size:10px; color:#64748b; margin:1px 0 0;">${company.address_en || ''}</p>
+        <p style="font-size:10px; color:#64748b; margin:1px 0 0;">TEL: ${company.tel || ''} | EMAIL: ${company.email || ''}</p>
       </div>
-      <div style="text-align:right; font-size:10px; color:#64748b;">
+      <div style="text-align:right; font-size:10px; color:#64748b; line-height:1.5;">
         <div>DATE: ${q.quotation_date || ''}</div>
         <div>VALID UNTIL: ${q.valid_until || ''}</div>
         <div>REF: ${q.quotation_number || ''}</div>
@@ -597,17 +655,18 @@ function buildQuoteHtml(q) {
     <div class="doc-title-section"><span class="doc-badge-title">QUOTATION</span></div>
   `
 
+  const buyerAddress = client.address_en || client.address || ''
+  const buyerContact = [client.email ? 'Email: ' + client.email : '', client.tel ? 'Tel: ' + client.tel : ''].filter(Boolean).join(' ')
   const buyerBox = `
-    <div style="border:1px solid #cbd5e1; padding:8px; border-radius:4px;">
+    <div style="border:1px solid #cbd5e1; padding:8px; border-radius:4px; line-height:1.6;">
       <strong>TO (BUYER):</strong><br>
-      <strong>${client.name_en || client.name || ''}</strong><br>
-      ${client.address_en || client.address || ''}<br>
-      ${client.email ? 'Email: ' + client.email : ''} ${client.tel ? 'Tel: ' + client.tel : ''}
+      <strong>${client.name_en || client.name || ''}</strong>
+      ${buyerAddress ? `<br><span style="white-space:pre-wrap;">${buyerAddress}</span>` : ''}
+      ${buyerContact ? `<br>${buyerContact}` : ''}
     </div>
   `
   const quoteInfoBox = `
     <div style="border:1px solid #cbd5e1; padding:8px; border-radius:4px; line-height:1.6;">
-      <strong>CURRENCY:</strong> ${q.currency || 'USD'}<br>
       <strong>TRADE TERMS:</strong> ${q.price_terms || ''} ${q.loading_port || ''}<br>
       <strong>DESTINATION:</strong> ${q.destination_port || '—'}<br>
       <strong>LEAD TIME:</strong> ${q.lead_time || '25-30 days'}<br>
@@ -616,9 +675,23 @@ function buildQuoteHtml(q) {
   `
 
   const itemRows = items.map((it, idx) => {
-    const qty = Number(it.moq) || 0
+    const ctns = Number(it.moq) || 0
+    const pcs = Number(it.pcs_per_ctn) || 0
+    const qty = ctns * pcs
     const price = Number(it.price) || 0
     const amount = qty * price
+    // 从 spec 快照中剥离 HS 行与与产品英文名重复的行，统一只渲染一次（兼容历史数据）
+    const specRaw = it.spec ? String(it.spec) : ''
+    const specHsMatch = specRaw.match(/HS\s*[:：]\s*([A-Za-z0-9.]+)/i)
+    const nameEn = (it.name_en || '').trim().toLowerCase()
+    const specClean = specRaw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => s && !/^HS\s*[:：]/i.test(s) && (!nameEn || s.toLowerCase() !== nameEn))
+      .join('\n')
+    const hsCode = it.hs_code || (specHsMatch ? specHsMatch[1] : '')
+    // 历史快照中装箱尺寸标签为「外箱:」，统一展示为「CTNS:」
+    const packingText = String(it.packing_desc || '').replace(/外箱\s*[:：]/g, 'CTNS:')
     return `
       <tr>
         <td style="text-align:center;">${idx + 1}</td>
@@ -626,10 +699,11 @@ function buildQuoteHtml(q) {
         <td style="text-align:center; padding:4px;">${it.img_url ? `<img src="${it.img_url}" style="width:70px;height:70px;object-fit:contain;display:block;margin:0 auto;">` : '-'}</td>
         <td style="line-height:1.4;">
           <strong>${it.name_en || ''}</strong>
-          ${it.spec ? `<br><span style="font-size:9.5px; color:#475569; white-space:pre-wrap;">${it.spec}</span>` : ''}
-          ${it.hs_code ? `<br><span style="font-size:9px; color:#94a3b8;">HS: ${it.hs_code}</span>` : ''}
+          ${specClean ? `<br><span style="font-size:9.5px; color:#475569; white-space:pre-wrap;">${specClean}</span>` : ''}
+          ${hsCode ? `<br><span style="font-size:9px; color:#94a3b8;">HS: ${hsCode}</span>` : ''}
         </td>
-        <td style="line-height:1.4; font-size:9.5px; white-space:pre-wrap;">${it.packing_desc || ''}</td>
+        <td style="line-height:1.4; font-size:9.5px; white-space:pre-wrap;">${packingText}</td>
+        <td style="text-align:right;">${ctns}</td>
         <td style="text-align:right; font-weight:bold;">${qty}</td>
         <td style="text-align:right;">${currSign}${formatMoney(price)}</td>
         <td style="text-align:right; font-weight:bold; color:#059669;">${currSign}${formatMoney(amount)}</td>
@@ -641,21 +715,28 @@ function buildQuoteHtml(q) {
     <table>
       <thead><tr>
         <th style="width:30px; text-align:center;">NO.</th>
-        <th style="width:9%; text-align:center;">Art No.</th>
-        <th style="width:80px; text-align:center;">Photo</th>
-        <th style="width:30%; text-align:center;">Description & Specification</th>
-        <th style="width:18%; text-align:center;">Packing</th>
-        <th style="width:9%; text-align:center;">MOQ (pcs)</th>
-        <th style="width:9%; text-align:center;">Unit Price</th>
-        <th style="width:12%; text-align:center;">Amount</th>
+        <th style="width:8%; text-align:center;">Art No.</th>
+        <th style="width:70px; text-align:center;">Photo</th>
+        <th style="width:26%; text-align:center;">Description & Specification</th>
+        <th style="width:16%; text-align:center;">Packing</th>
+        <th style="width:7%; text-align:center;">CTNS</th>
+        <th style="width:9%; text-align:center;">Qty (pcs)</th>
+        <th style="width:8%; text-align:center;">Unit Price</th>
+        <th style="width:11%; text-align:center;">Amount</th>
       </tr></thead>
-      <tbody>${itemRows}</tbody>
-      <tfoot><tr style="font-weight:bold; background:#f8fafc;">
-        <td colspan="5" style="text-align:right;">TOTAL:</td>
-        <td style="text-align:right;">${items.reduce((s, it) => s + (Number(it.moq) || 0), 0)}</td>
-        <td></td>
-        <td style="text-align:right; color:#059669;">${currSign}${formatMoney(total)}</td>
-      </tr></tfoot>
+      <tbody>
+        ${itemRows}
+        <tr style="font-weight:bold; background:#f8fafc;">
+          <td colspan="5" style="text-align:right;">TOTAL:</td>
+          <td style="text-align:right;">${totalCtns}</td>
+          <td style="text-align:right;">${totalQty}</td>
+          <td></td>
+          <td style="text-align:right; color:#059669;">${currSign}${formatMoney(total)}</td>
+        </tr>
+        <tr style="font-size:9px; color:#64748b;">
+          <td colspan="9" style="text-align:right;">TOTAL G.W.: ${totalGw.toFixed(1)} KGS &nbsp;|&nbsp; TOTAL MEASUREMENT: ${totalCbm.toFixed(3)} CBM</td>
+        </tr>
+      </tbody>
     </table>
   `
 
@@ -663,16 +744,9 @@ function buildQuoteHtml(q) {
     ? `<div style="margin-top:12px; padding:10px; border:1px dashed #cbd5e1; border-radius:4px; font-size:10px; line-height:1.6; white-space:pre-wrap;">${q.remark}</div>`
     : ''
 
-  const footer = `
-    <div style="margin-top:24px; display:flex; justify-content:space-between; font-size:10px; color:#64748b;">
-      <div>For SELLER: ${company.name_en || ''}</div>
-      <div>For BUYER: ${client.name_en || client.name || ''}</div>
-    </div>
-  `
-
   return header +
     `<div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:12px; font-size:11px;">${buyerBox}${quoteInfoBox}</div>` +
-    table + remarkBlock + footer
+    table + remarkBlock
 }
 
 function onPrintPreview() {
@@ -681,42 +755,58 @@ function onPrintPreview() {
     <!DOCTYPE html><html><head><meta charset="utf-8">
     <title>QUOTATION - ${previewData.value?.quotation_number || ''}</title>
     <style>
-      body { font-family: Arial, sans-serif; }
-      .doc-page { padding: 35px 40px; font-size: 11px; color: #0f172a; line-height: 1.5; }
-      .doc-page table { font-size: 11px; margin: 10px 0; width: 100%; border-collapse: collapse; }
-      .doc-page th, .doc-page td { border: 1px solid #cbd5e1; padding: 6px 8px; }
+      @page { margin: 12mm 10mm; }
+      * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      body { margin: 0; font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', Arial, sans-serif; color: #0f172a; }
+      .doc-page { padding: 0; font-size: 11px; color: #0f172a; line-height: 1.5; }
+      .doc-page table { font-size: 11px; margin: 10px 0; width: 100%; border-collapse: collapse; border: 1px solid #cbd5e1; }
+      .doc-page th, .doc-page td { border: 1px solid #cbd5e1; padding: 6px 8px; vertical-align: middle; }
       .doc-page th { background: #f8fafc; }
+      .doc-page tr { page-break-inside: avoid; }
       .doc-badge-title { font-size: 15pt; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; color: #0f172a; }
-      .doc-title-section { text-align: center; margin: 12px 0; padding: 8px 0; border-top: 2px solid #0f172a; border-bottom: 2px solid #0f172a; }
+      .doc-title-section { text-align: center; margin: 10px 0; padding: 4px 0; }
       img { max-width: 100%; }
       @media print { body { margin: 0; } }
-    </style></head><body>${previewHtml.value}</body></html>
+    </style></head><body><div class="doc-page">${previewHtml.value}</div></body></html>
   `)
   win.document.close()
   win.focus()
   setTimeout(() => win.print(), 300)
 }
 
-/* ========== 转 PI ========== */
-async function onConvertToPi(row, fromPreview = false) {
+/* ========== 转 PI（先选择报关责任，再确认转化） ========== */
+// 选择弹窗状态
+const piDialogVisible = ref(false)
+const piTarget = ref(null)        // 待转化的报价单行
+const piFromPreview = ref(false)  // 入口是否来自预览弹窗
+const piCustomsResp = ref('我司代办报关')
+
+// 第一步：点击转 PI → 打开报关责任选择框
+function onConvertToPi(row, fromPreview = false) {
   if (!row) return
   if (row.status === '已转PI') {
     ElMessage.warning('该报价单已转为 PI，无法重复转化')
     return
   }
-  const ok = await ElMessageBox.confirm(
-    `确认将报价单「${row.quotation_number}」转为正式 PI 吗？\n系统将基于此报价单在订单管理中创建一条对应记录，并自动跳转到订单管理页面。`,
-    '转 PI 确认',
-    { type: 'warning', confirmButtonText: '确认转 PI', cancelButtonText: '取消' }
-  ).catch(() => false)
-  if (!ok) return
+  piTarget.value = row
+  piFromPreview.value = !!fromPreview
+  piCustomsResp.value = '我司代办报关'
+  piDialogVisible.value = true
+}
 
+// 第二步：选择后确认 → 调用转 PI 接口
+async function confirmConvertToPi() {
+  const row = piTarget.value
+  if (!row) return
   converting.value = true
   try {
-    const result = await convertQuotationToOrder(row.id)
+    const result = await convertQuotationToOrder(row.id, {
+      customs_responsibility: piCustomsResp.value
+    })
     ElMessage.success(`报价单已转为正式 PI：${result.pi_number}`)
-    // 关闭预览弹窗（若来自预览）
-    if (fromPreview) previewVisible.value = false
+    piDialogVisible.value = false
+    // 关闭报价单预览弹窗（若入口来自预览）
+    if (piFromPreview.value) previewVisible.value = false
     // 刷新报价单列表
     loadList()
     // 跳转到订单管理页面
@@ -780,6 +870,18 @@ onMounted(() => { loadList(); loadOptions() })
 .load-qty-empty {
   color: #c0c4cc;
 }
+.calc-info {
+  font-size: 11px;
+  text-align: left;
+  padding-left: 4px;
+  line-height: 1.6;
+}
+.ci-line {
+  white-space: nowrap;
+}
+.ci-label {
+  color: #909399;
+}
 .remark-block {
   margin-top: 12px;
 }
@@ -806,11 +908,13 @@ onMounted(() => { loadList(); loadOptions() })
   margin: 10px 0;
   width: 100%;
   border-collapse: collapse;
+  border: 1px solid #cbd5e1;
 }
 .doc-page :deep(th),
 .doc-page :deep(td) {
   border: 1px solid #cbd5e1;
   padding: 6px 8px;
+  vertical-align: middle;
 }
 .doc-page :deep(th) {
   background: #f8fafc;
@@ -824,9 +928,29 @@ onMounted(() => { loadList(); loadOptions() })
 }
 .doc-page :deep(.doc-title-section) {
   text-align: center;
-  margin: 12px 0;
-  padding: 8px 0;
-  border-top: 2px solid #0f172a;
-  border-bottom: 2px solid #0f172a;
+  margin: 10px 0;
+  padding: 4px 0;
+}
+/* 转 PI 报关责任选择框 */
+.pi-customs-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+.pi-customs-radio {
+  width: 100%;
+  margin-right: 0;
+  height: auto;
+  padding: 10px 12px;
+  white-space: normal;
+  align-items: flex-start;
+}
+.pi-radio-desc {
+  font-size: 12px;
+  font-weight: normal;
+  color: #909399;
+  line-height: 1.6;
+  margin-top: 4px;
 }
 </style>
