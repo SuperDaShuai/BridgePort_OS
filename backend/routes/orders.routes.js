@@ -9,7 +9,7 @@ const ALLOWED = [
   'pi_number', 'signing_date', 'client_id', 'supplier_id',
   'currency', 'trade_terms', 'customs_responsibility', 'bank_account_id', 'alipay_qrcode',
   'payment_terms', 'delivery_date', 'loading_port', 'destination_port',
-  'packing_desc', 'special_req', 'show_special_req', 'show_stamp',
+  'packing_desc', 'special_req', 'show_special_req', 'show_stamp', 'show_hs_code',
   'total_amount', 'current_node', 'progress_percent', 'quotation_id',
   'purchase_contract', 'production_order', 'booking_data', 'customs_data', 'decl_data'
 ];
@@ -165,6 +165,7 @@ router.post(
     // 布尔字段归一
     if (data.show_special_req !== undefined) data.show_special_req = toBool(data.show_special_req);
     if (data.show_stamp !== undefined) data.show_stamp = toBool(data.show_stamp);
+    if (data.show_hs_code !== undefined) data.show_hs_code = toBool(data.show_hs_code);
 
     // PI 号自动生成 + 唯一性校验
     const year = new Date().getFullYear();
@@ -267,6 +268,7 @@ router.put(
     sanitizeDates(data);
     if (data.show_special_req !== undefined) data.show_special_req = toBool(data.show_special_req);
     if (data.show_stamp !== undefined) data.show_stamp = toBool(data.show_stamp);
+    if (data.show_hs_code !== undefined) data.show_hs_code = toBool(data.show_hs_code);
     const hasItems = Array.isArray(req.body.items);
     if (Object.keys(data).length === 0 && !hasItems) return res.fail('无可更新字段', 400);
 

@@ -183,6 +183,7 @@
         <div class="form-grid-2">
           <el-form-item label="PI 显示特殊要求"><el-switch v-model="form.show_special_req" /></el-form-item>
           <el-form-item label="PI 显示电子签章"><el-switch v-model="form.show_stamp" /></el-form-item>
+          <el-form-item label="PI 显示HS编码"><el-switch v-model="form.show_hs_code" /></el-form-item>
         </div>
 
         <el-divider content-position="left">
@@ -339,7 +340,7 @@ const blankForm = () => ({
   loading_port: 'Ningbo, China', destination_port: '',
   packing_desc: 'Standard Neutral Export Cartons',
   special_req: 'Standard requirements.',
-  show_special_req: true, show_stamp: true,
+  show_special_req: true, show_stamp: true, show_hs_code: false,
   total_amount: undefined, quotation_id: null, items: []
 })
 const blankItem = () => ({
@@ -504,6 +505,7 @@ async function openEdit(row) {
   priceCurrency.value = 'RMB' // 编辑时默认人民币显示，用户可点击切换
   detail.show_special_req = !!detail.show_special_req
   detail.show_stamp = !!detail.show_stamp
+  detail.show_hs_code = !!detail.show_hs_code
   // 收款方式：有支付宝收款码即视为支付宝模式（与银行账户互斥）
   detail.pay_method = detail.alipay_qrcode ? 'alipay' : 'bank'
   detail.items = (detail.items || []).map(it => ({
@@ -561,6 +563,7 @@ async function onSave() {
     ...form.value,
     show_special_req: form.value.show_special_req ? 1 : 0,
     show_stamp: form.value.show_stamp ? 1 : 0,
+    show_hs_code: form.value.show_hs_code ? 1 : 0,
     bank_account_id: form.value.pay_method === 'alipay' ? null : form.value.bank_account_id,
     alipay_qrcode: form.value.pay_method === 'alipay' ? form.value.alipay_qrcode : null,
     items
@@ -621,7 +624,7 @@ function buildPiHtml(order) {
         <div>REF: ${order.pi_number || ''}</div>
       </div>
     </div>
-    <div style="text-align:center; margin:14px 0 12px; padding-bottom:10px; border-bottom:1.5px solid #0f172a; font-size:15pt; font-weight:900; letter-spacing:1px; text-transform:uppercase; color:#0f172a;">PROFORMA INVOICE</div>
+    <div style="text-align:center; margin:14px 0 12px; font-size:15pt; font-weight:900; letter-spacing:1px; text-transform:uppercase; color:#0f172a;">PROFORMA INVOICE</div>
   `
 
   // BUYER + PI INFO 双栏
@@ -648,7 +651,7 @@ function buildPiHtml(order) {
   // 明细表格
   const itemsRows = (order.items || []).map((it, idx) => {
     const qty = Number(it.qty || 0), price = Number(it.price || 0)
-    // 剥离 spec 快照中的 HS 行与与产品英文名重复的行（兼容历史数据）
+    // 剥离 spec 快照中的 HS 行与与产品英文名重复的行（兼容历史数据），仅展示规格描述
     const specRaw = it.spec ? String(it.spec) : ''
     const specHsMatch = specRaw.match(/HS\s*[:：]\s*([A-Za-z0-9.]+)/i)
     const nameEn = (it.name_en || '').trim().toLowerCase()
@@ -664,14 +667,13 @@ function buildPiHtml(order) {
         <td><strong>${it.model || ''}</strong></td>
         <td style="text-align:center; padding:4px;">${it.img_url ? `<img src="${it.img_url}" style="width:80px;height:80px;object-fit:contain;display:block;margin:0 auto;">` : '-'}</td>
         <td style="line-height:1.4;">
-          <strong>${it.name_en || ''}</strong>
-          ${specClean ? `<br><span style="font-size:9.5px; color:#475569; white-space:pre-wrap;">${specClean}</span>` : ''}
-          ${hsCode ? `<br><span style="font-size:9px; color:#94a3b8;">HS: ${hsCode}</span>` : ''}
+          ${specClean ? `<span style="font-size:9.5px; color:#475569; white-space:pre-wrap;">${specClean}</span>` : ''}
+          ${(order.show_hs_code && hsCode) ? `<br><span style="font-size:9px; color:#94a3b8;">HS: ${hsCode}</span>` : ''}
         </td>
         <td style="text-align:center;">${it.pcs_per_ctn || ''}</td>
         <td style="text-align:center;">${it.ctns || ''}</td>
-        <td style="text-align:right; font-weight:bold;">${qty}</td>
-        <td style="text-align:right;">${currSign}${formatMoney(price)}</td>
+        <td style="text-align:center; font-weight:bold;">${qty}</td>
+        <td style="text-align:center;">${currSign}${formatMoney(price)}</td>
         <td style="text-align:right; font-weight:bold;">${currSign}${formatMoney(qty * price)}</td>
       </tr>
     `
@@ -681,7 +683,7 @@ function buildPiHtml(order) {
     <tr style="font-weight:bold; background:#f8fafc;">
       <td colspan="5" style="text-align:right;">TOTAL:</td>
       <td style="text-align:center;">${totals.ctns}</td>
-      <td style="text-align:right;">${totals.qty}</td>
+      <td style="text-align:center;">${totals.qty}</td>
       <td></td>
       <td style="text-align:right; color:#059669;">${currSign}${formatMoney(totals.amount)}</td>
     </tr>
@@ -693,7 +695,7 @@ function buildPiHtml(order) {
         <th style="width:30px; text-align:center;">NO.</th>
         <th style="width:9%; text-align:center;">Art No.</th>
         <th style="width:90px; text-align:center;">Photo</th>
-        <th style="width:30%; text-align:center;">Product Name & Specification</th>
+        <th style="width:30%; text-align:center;">Specification</th>
         <th style="width:8%; text-align:center;">PCS/CTN</th>
         <th style="width:8%; text-align:center;">CTNS</th>
         <th style="width:10%; text-align:center;">Total Qty (pcs)</th>
@@ -707,7 +709,7 @@ function buildPiHtml(order) {
   // SAY TOTAL WORDS
   const sayTotal = `
     <div style="margin-top:6px; font-weight:bold; font-size:10px;">
-      ${order.currency === 'RMB' ? 'SAY TOTAL CHINESE YUAN ' : 'SAY TOTAL US DOLLARS '}${totalWords} ONLY
+      ${order.currency === 'RMB' ? 'SAY TOTAL CHINESE YUAN ' : 'SAY TOTAL US DOLLARS '}${totalWords} ONLY***
     </div>
   `
 

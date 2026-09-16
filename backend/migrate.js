@@ -605,6 +605,21 @@ const migrations = [
         await runSQL(conn, `ALTER TABLE orders ADD COLUMN alipay_qrcode MEDIUMTEXT NULL DEFAULT NULL COMMENT '支付宝收款二维码(base64)' AFTER bank_account_id`);
       }
     }
+  },
+
+  // ===== 022 · orders.show_hs_code PI显示HS编码开关 =====
+  {
+    id: '022',
+    desc: 'orders 新增 PI 显示HS编码开关 show_hs_code (TINYINT)',
+    async check(conn) {
+      if (!(await tableExists(conn, 'orders'))) return true;
+      return await columnExists(conn, 'orders', 'show_hs_code');
+    },
+    async up(conn) {
+      if (!(await columnExists(conn, 'orders', 'show_hs_code'))) {
+        await runSQL(conn, `ALTER TABLE orders ADD COLUMN show_hs_code TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'PI是否显示HS编码行 0=隐藏 1=显示' AFTER show_stamp`);
+      }
+    }
   }
 ];
 
