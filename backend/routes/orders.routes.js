@@ -7,7 +7,7 @@ const router = express.Router();
 
 const ALLOWED = [
   'pi_number', 'signing_date', 'client_id', 'supplier_id',
-  'currency', 'trade_terms', 'customs_responsibility', 'bank_account_id',
+  'currency', 'trade_terms', 'customs_responsibility', 'bank_account_id', 'alipay_qrcode',
   'payment_terms', 'delivery_date', 'loading_port', 'destination_port',
   'packing_desc', 'special_req', 'show_special_req', 'show_stamp',
   'total_amount', 'current_node', 'progress_percent', 'quotation_id',
@@ -258,6 +258,8 @@ router.post(
 );
 
 // 更新：主表更新，items 若传入则整体替换
+// 报关责任从「请选择」变为正式值（或责任已明确但单据缺失）时，自动补生成单据默认数据
+const REAL_CUSTOMS = ['我司代办报关', '客户自行报关'];
 router.put(
   '/:id',
   asyncHandler(async (req, res) => {
@@ -265,13 +267,54 @@ router.put(
     sanitizeDates(data);
     if (data.show_special_req !== undefined) data.show_special_req = toBool(data.show_special_req);
     if (data.show_stamp !== undefined) data.show_stamp = toBool(data.show_stamp);
-    serializeJsonFields(data);
     const hasItems = Array.isArray(req.body.items);
     if (Object.keys(data).length === 0 && !hasItems) return res.fail('无可更新字段', 400);
 
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
+
+      // 读取原订单（行锁），用于判断报关责任转变与单据缺失
+      const [[oldRow]] = await conn.query(
+        'SELECT * FROM orders WHERE id = ? FOR UPDATE',
+        [req.params.id]
+      );
+      if (!oldRow) {
+        await conn.rollback();
+        return res.fail('订单不存在', 404);
+      }
+
+      let docsGenerated = false;
+      const newResp = data.customs_responsibility !== undefined
+        ? data.customs_responsibility
+        : oldRow.customs_responsibility;
+      const docsMissing = !oldRow.purchase_contract && !oldRow.production_order;
+      if (REAL_CUSTOMS.includes(newResp) && docsMissing) {
+        // 合并更新前后的字段作为单据生成上下文
+        const merged = { ...oldRow, ...data };
+        const rawItems = hasItems
+          ? req.body.items.filter((it) => it && it.model)
+          : (await conn.query('SELECT * FROM order_items WHERE order_id = ?', [req.params.id]))[0];
+        const [coRows] = await conn.query('SELECT name_cn, name_en, tel FROM company_settings LIMIT 1');
+        const co = coRows[0] || {};
+        const [clRows] = merged.client_id ? await conn.query('SELECT name_en FROM clients WHERE id = ?', [merged.client_id]) : [[]];
+        const cl = clRows[0] || {};
+        const [suRows] = merged.supplier_id ? await conn.query('SELECT name FROM suppliers WHERE id = ?', [merged.supplier_id]) : [[]];
+        const su = suRows[0] || {};
+        const docs = generateDefaultDocuments(merged.pi_number, merged.signing_date, newResp, rawItems, {
+          client_id: merged.client_id,
+          company_name_cn: co.name_cn, company_name_en: co.name_en, company_tel: co.tel,
+          client_name_en: cl.name_en,
+          supplier_name: su.name,
+          currency: merged.currency, trade_terms: merged.trade_terms,
+          loading_port: merged.loading_port, destination_port: merged.destination_port,
+          delivery_date: merged.delivery_date, payment_terms: merged.payment_terms
+        });
+        Object.assign(data, docs);
+        docsGenerated = true;
+      }
+
+      serializeJsonFields(data);
       if (Object.keys(data).length > 0) {
         const [r] = await conn.query('UPDATE orders SET ? WHERE id = ?', [data, req.params.id]);
         if (r.affectedRows === 0) {
@@ -290,7 +333,10 @@ router.put(
         }
       }
       await conn.commit();
-      res.success({ id: Number(req.params.id) }, '更新成功');
+      res.success(
+        { id: Number(req.params.id), docs_generated: docsGenerated },
+        docsGenerated ? '更新成功，已根据报关责任自动生成购销合同等单据默认数据' : '更新成功'
+      );
     } catch (e) {
       await conn.rollback();
       throw e;

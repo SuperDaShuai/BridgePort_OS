@@ -333,27 +333,6 @@
         <el-button @click="previewVisible = false">关 闭</el-button>
       </template>
     </el-dialog>
-
-    <!-- ========== 转 PI：报关责任选择确认框 ========== -->
-    <el-dialog v-model="piDialogVisible" title="转 PI 确认" width="500px" append-to-body>
-      <div style="margin-bottom:14px; line-height:1.7;">
-        将报价单 <strong>{{ piTarget?.quotation_number }}</strong> 转为正式 PI，请选择报关责任方：
-      </div>
-      <el-radio-group v-model="piCustomsResp" class="pi-customs-group">
-        <el-radio value="我司代办报关" border class="pi-customs-radio">
-          我司代办报关
-          <div class="pi-radio-desc">我司负责出口报关：自动生成出口报关草单与目的港清关三单（Invoice / Sales Contract / Packing List），订单进入关务流程。</div>
-        </el-radio>
-        <el-radio value="客户自行报关" border class="pi-customs-radio">
-          客户自行报关
-          <div class="pi-radio-desc">客户自行安排报关：不生成报关草单与清关资料，该订单不会出现在「出口报关单要素」列表中。</div>
-        </el-radio>
-      </el-radio-group>
-      <template #footer>
-        <el-button @click="piDialogVisible = false">取 消</el-button>
-        <el-button type="warning" :loading="converting" @click="confirmConvertToPi">确认转 PI</el-button>
-      </template>
-    </el-dialog>
   </el-card>
 </template>
 
@@ -774,39 +753,25 @@ function onPrintPreview() {
   setTimeout(() => win.print(), 300)
 }
 
-/* ========== 转 PI（先选择报关责任，再确认转化） ========== */
-// 选择弹窗状态
-const piDialogVisible = ref(false)
-const piTarget = ref(null)        // 待转化的报价单行
-const piFromPreview = ref(false)  // 入口是否来自预览弹窗
-const piCustomsResp = ref('我司代办报关')
-
-// 第一步：点击转 PI → 打开报关责任选择框
-function onConvertToPi(row, fromPreview = false) {
+/* ========== 转 PI（直接转单，报关责任留待外销订单编辑时选择） ========== */
+async function onConvertToPi(row, fromPreview = false) {
   if (!row) return
   if (row.status === '已转PI') {
     ElMessage.warning('该报价单已转为 PI，无法重复转化')
     return
   }
-  piTarget.value = row
-  piFromPreview.value = !!fromPreview
-  piCustomsResp.value = '我司代办报关'
-  piDialogVisible.value = true
-}
-
-// 第二步：选择后确认 → 调用转 PI 接口
-async function confirmConvertToPi() {
-  const row = piTarget.value
-  if (!row) return
+  const ok = await ElMessageBox.confirm(
+    '将报价单转为正式 PI（外销订单）？报关责任默认为「请选择」，可在外销订单编辑时再选择，选择保存后系统将自动生成相关单据。',
+    '转 PI 确认',
+    { confirmButtonText: '确认转 PI', cancelButtonText: '取 消', type: 'warning' }
+  ).catch(() => false)
+  if (!ok) return
   converting.value = true
   try {
-    const result = await convertQuotationToOrder(row.id, {
-      customs_responsibility: piCustomsResp.value
-    })
-    ElMessage.success(`报价单已转为正式 PI：${result.pi_number}`)
-    piDialogVisible.value = false
+    const result = await convertQuotationToOrder(row.id)
+    ElMessage.success(`报价单已转为正式 PI：${result?.pi_number || ''}，报关责任为「请选择」，请在外销订单中编辑确认`)
     // 关闭报价单预览弹窗（若入口来自预览）
-    if (piFromPreview.value) previewVisible.value = false
+    if (fromPreview) previewVisible.value = false
     // 刷新报价单列表
     loadList()
     // 跳转到订单管理页面
@@ -930,27 +895,5 @@ onMounted(() => { loadList(); loadOptions() })
   text-align: center;
   margin: 10px 0;
   padding: 4px 0;
-}
-/* 转 PI 报关责任选择框 */
-.pi-customs-group {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 100%;
-}
-.pi-customs-radio {
-  width: 100%;
-  margin-right: 0;
-  height: auto;
-  padding: 10px 12px;
-  white-space: normal;
-  align-items: flex-start;
-}
-.pi-radio-desc {
-  font-size: 12px;
-  font-weight: normal;
-  color: #909399;
-  line-height: 1.6;
-  margin-top: 4px;
 }
 </style>

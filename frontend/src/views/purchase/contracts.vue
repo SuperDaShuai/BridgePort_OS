@@ -245,7 +245,8 @@ async function loadList() {
   loading.value = true
   try {
     const d = await listOrders({ page: 1, pageSize: 500 })
-    list.value = d.list
+    // 「请选择」= 报关责任未确认（转PI默认），选择并保存后才进入单据流程
+    list.value = (d.list || []).filter((o) => o.customs_responsibility !== '请选择')
   } catch { /* 拦截器 */ }
   finally { loading.value = false }
 }

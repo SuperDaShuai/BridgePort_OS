@@ -341,8 +341,8 @@ async function loadList() {
   loading.value = true
   try {
     const d = await listOrders({ page: 1, pageSize: 500 })
-    // 仅「我司代办报关」的订单才生成报关单据套件
-    list.value = (d.list || []).filter((o) => o.customs_responsibility !== '客户自行报关')
+    // 仅「我司代办报关」的订单才生成报关单据套件（「请选择」表示报关责任未确认，暂不进入关务流程）
+    list.value = (d.list || []).filter((o) => o.customs_responsibility === '我司代办报关')
   } catch { /* 拦截器 */ }
   finally { loading.value = false }
 }

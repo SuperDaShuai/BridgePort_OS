@@ -124,16 +124,35 @@
           </el-form-item>
           <el-form-item label="报关责任">
             <el-select v-model="form.customs_responsibility" style="width: 100%">
+              <el-option value="请选择" label="请选择（转PI默认，待确认）" />
               <el-option value="我司代办报关" label="我司代办报关" />
               <el-option value="客户自行报关" label="客户自行报关" />
             </el-select>
+            <div v-if="form.customs_responsibility === '请选择'" class="field-hint">
+              转PI订单待确认：请选择报关责任后保存，系统将自动生成购销合同等单据
+            </div>
           </el-form-item>
         </div>
         <div class="form-grid-4">
-          <el-form-item label="收款银行账户">
+          <el-form-item label="收款方式">
+            <el-radio-group v-model="form.pay_method" @change="onPayMethodChange">
+              <el-radio value="bank">银行账户</el-radio>
+              <el-radio value="alipay">支付宝</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="form.pay_method === 'bank'" label="收款银行账户">
             <el-select v-model="form.bank_account_id" filterable clearable placeholder="选择收款账户" style="width: 100%">
               <el-option v-for="b in bankOptions" :key="b.id" :label="b.route_type" :value="b.id" />
             </el-select>
+          </el-form-item>
+          <el-form-item v-else label="支付宝收款码">
+            <div v-if="form.alipay_qrcode" class="alipay-preview">
+              <el-image :src="form.alipay_qrcode" fit="contain" class="alipay-img" :preview-src-list="[form.alipay_qrcode]" preview-teleported />
+              <el-button size="small" type="danger" link @click="form.alipay_qrcode = null">移除</el-button>
+            </div>
+            <el-upload v-else :show-file-list="false" :before-upload="handleAlipayImg" accept="image/*">
+              <el-button type="primary" plain>上传收款二维码</el-button>
+            </el-upload>
           </el-form-item>
           <el-form-item label="付款方式">
             <el-select
@@ -316,7 +335,7 @@ const rules = {
 const blankForm = () => ({
   pi_number: '', signing_date: '', client_id: null, supplier_id: null,
   currency: 'USD', trade_terms: 'FOB', customs_responsibility: '我司代办报关',
-  bank_account_id: null, payment_terms: '', delivery_date: '',
+  pay_method: 'bank', bank_account_id: null, alipay_qrcode: null, payment_terms: '', delivery_date: '',
   loading_port: 'Ningbo, China', destination_port: '',
   packing_desc: 'Standard Neutral Export Cartons',
   special_req: 'Standard requirements.',
@@ -485,6 +504,8 @@ async function openEdit(row) {
   priceCurrency.value = 'RMB' // 编辑时默认人民币显示，用户可点击切换
   detail.show_special_req = !!detail.show_special_req
   detail.show_stamp = !!detail.show_stamp
+  // 收款方式：有支付宝收款码即视为支付宝模式（与银行账户互斥）
+  detail.pay_method = detail.alipay_qrcode ? 'alipay' : 'bank'
   detail.items = (detail.items || []).map(it => ({
     ...it,
     price_rmb: it.price_rmb ?? it.price ?? undefined, // 已存订单以 price 为 RMB 基准
@@ -494,21 +515,62 @@ async function openEdit(row) {
   dialogVisible.value = true
 }
 
+/* ========== 收款方式：银行账户 / 支付宝（互斥） ========== */
+function onPayMethodChange(method) {
+  if (method === 'alipay') {
+    form.value.bank_account_id = null // 切支付宝：清空银行账户
+  } else {
+    form.value.alipay_qrcode = null   // 切银行账户：清空收款码
+  }
+}
+
+// 支付宝收款码上传：压缩为最长边 500px 的 base64（保持 PNG 以确保二维码清晰可扫）
+function handleAlipayImg(file) {
+  const MAX_SIDE = 500
+  const reader = new FileReader()
+  reader.onload = (evt) => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height))
+      canvas.width = Math.round(img.width * scale)
+      canvas.height = Math.round(img.height * scale)
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      form.value.alipay_qrcode = canvas.toDataURL('image/png', 0.9)
+      ElMessage.success('收款码已预览，保存订单后生效')
+    }
+    img.src = evt.target.result
+  }
+  reader.readAsDataURL(file)
+  return false // 阻止自动上传，只做本地压缩
+}
+
 async function onSave() {
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
   const items = (form.value.items || []).filter(it => it.model && it.price != null)
   if (items.length === 0) { ElMessage.warning('请至少添加一行商品明细'); return }
   form.value.total_amount = Number(orderTotal.value.toFixed(2))
+  // 收款方式互斥落库：支付宝 → 清空银行账户；银行账户 → 清空收款码
+  if (form.value.pay_method === 'alipay' && !form.value.alipay_qrcode) {
+    ElMessage.warning('已选择支付宝收款，请先上传收款二维码')
+    return
+  }
   const payload = {
     ...form.value,
     show_special_req: form.value.show_special_req ? 1 : 0,
     show_stamp: form.value.show_stamp ? 1 : 0,
+    bank_account_id: form.value.pay_method === 'alipay' ? null : form.value.bank_account_id,
+    alipay_qrcode: form.value.pay_method === 'alipay' ? form.value.alipay_qrcode : null,
     items
   }
   saving.value = true
   try {
-    if (form.value.id) { await updateOrder(form.value.id, payload); ElMessage.success('更新成功') }
+    if (form.value.id) {
+      const r = await updateOrder(form.value.id, payload)
+      ElMessage.success(r?.docs_generated ? '更新成功，已根据报关责任自动生成购销合同等单据默认数据' : '更新成功')
+    }
     else { await createOrder(payload); ElMessage.success('创建成功') }
     dialogVisible.value = false; loadList()
   } catch { /* 拦截器 */ }
@@ -666,15 +728,32 @@ function buildPiHtml(order) {
     </div>
   ` : ''
 
-  // BENEFICIARY BANK
-  const bankHtml = `
+  // BENEFICIARY BANK —— 支付宝模式仅显示收款二维码；否则使用收款路线库「路由备注」（保留换行）；
+  // 路由备注为空时回落到结构化银行行
+  const bankHtml = order.alipay_qrcode ? `
+    <div style="margin-top:16px; font-size:11px; border-top:1px solid #e2e8f0; padding-top:12px;">
+      <div style="padding-bottom:8px;">
+        <strong>BENEFICIARY BANK DETAILS:</strong>
+        <div style="margin-top:8px;">
+          <img src="${order.alipay_qrcode}" alt="ALIPAY QR CODE" style="max-width:180px; max-height:180px; display:block;" />
+        </div>
+      </div>
+    </div>
+  ` : bank.routing_note ? `
+    <div style="margin-top:16px; font-size:11px; border-top:1px solid #e2e8f0; padding-top:12px;">
+      <div style="padding-bottom:8px;">
+        <strong>BENEFICIARY BANK DETAILS:</strong>
+        <div style="white-space:pre-wrap; margin-top:4px; line-height:1.6;">${bank.routing_note}</div>
+      </div>
+    </div>
+  ` : `
     <div style="margin-top:16px; font-size:11px; border-top:1px solid #e2e8f0; padding-top:12px;">
       <div style="padding-bottom:8px;">
         <strong>BENEFICIARY BANK DETAILS:</strong><br>
         Bank Name: ${bank.bank_name || company.bank_name || ''}<br>
         Account No: ${bank.account_number || company.bank_account || ''}<br>
         Swift Code: ${bank.swift_code || company.swift_code || '-'}<br>
-        ${bank.routing_note ? `Routing / Beneficiary: ${bank.routing_note}` : `Beneficiary: ${company.name_en || ''}`}
+        Beneficiary: ${company.name_en || ''}
       </div>
     </div>
   `
@@ -767,6 +846,9 @@ onMounted(() => { loadList(); loadOptions() })
 .no-photo { width: 48px; height: 48px; line-height: 48px; text-align: center; background: #f5f7fa; border-radius: 4px; color: #c0c4cc; }
 .subtotal { font-weight: 600; color: #16a34a; }
 .progress-text { font-size: 11px; color: #909399; margin-top: 2px; }
+.field-hint { font-size: 12px; color: #e6a23c; line-height: 1.5; margin-top: 2px; }
+.alipay-preview { display: flex; align-items: center; gap: 8px; }
+.alipay-img { width: 110px; height: 110px; border: 1px solid #e2e8f0; border-radius: 4px; background: #f8fafc; }
 .total-bar { display: flex; justify-content: flex-end; align-items: center; margin-top: 14px; padding: 10px 16px; background: #f0f9eb; border-radius: 4px; font-size: 14px; }
 .total-amount { font-size: 18px; font-weight: 700; color: #16a34a; margin-left: 8px; }
 

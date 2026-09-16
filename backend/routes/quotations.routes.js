@@ -1,7 +1,6 @@
 const express = require('express');
 const pool = require('../config/db');
 const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers');
-const { generateDefaultDocuments } = require('../utils/documents');
 
 const router = express.Router();
 
@@ -113,12 +112,6 @@ router.post(
   asyncHandler(async (req, res) => {
     const quoteId = Number(req.params.id);
 
-    // 报关责任：仅允许两种取值，缺省/非法值回落「我司代办报关」
-    const CUSTOMS_OPTIONS = ['我司代办报关', '客户自行报关'];
-    const customsResp = CUSTOMS_OPTIONS.includes(req.body?.customs_responsibility)
-      ? req.body.customs_responsibility
-      : '我司代办报关';
-
     // 1. 读取报价单主表（行锁 SELECT ... FOR UPDATE）
     const conn = await pool.getConnection();
     try {
@@ -186,7 +179,7 @@ router.post(
         supplier_id: supplierId,
         currency: quote.currency || 'USD',
         trade_terms: quote.price_terms || 'FOB',
-        customs_responsibility: customsResp,
+        customs_responsibility: '请选择',
         bank_account_id: bankAccountId,
         payment_terms: quote.payment_terms || null,
         delivery_date: deliveryDate,
@@ -235,42 +228,8 @@ router.post(
       });
       orderData.total_amount = Number(totalAmount.toFixed(2));
 
-      // 7.5 自动生成单据默认数据（购销合同/生产任务单/订舱委托书/报关要素/清关资料）
-      const rawItems = items.map((it) => {
-        const pcs = Number(it.pcs_per_ctn) || 1;
-        const ctns = Number(it.moq) || 0;
-        const qty = ctns * pcs;
-        return {
-          name_en: it.name_en, model: it.model, hs_code: it.hs_code,
-          unit: it.unit, qty, ctns, pcs_per_ctn: pcs,
-          nw_per_ctn: Number(it.nw_per_ctn) || 0, gw_per_ctn: Number(it.gw_per_ctn) || 0,
-          cbm_per_ctn: Number(it.cbm_per_ctn) || 0, price: Number(it.price) || 0
-        };
-      });
-      // 收集单据默认值所需上下文（企业抬头/客户/供应商）
-      const [coRows] = await conn.query('SELECT name_cn, name_en, tel FROM company_settings LIMIT 1');
-      const co = coRows[0] || {};
-      const [clRows] = await conn.query('SELECT name_en FROM clients WHERE id = ?', [quote.client_id]);
-      const cl = clRows[0] || {};
-      const [suRows] = quote.supplier_id ? await conn.query('SELECT name FROM suppliers WHERE id = ?', [quote.supplier_id]) : [[]];
-      const su = suRows[0] || {};
-      const docs = generateDefaultDocuments(piNumber, quote.quotation_date, customsResp, rawItems, {
-        client_id: quote.client_id,
-        company_name_cn: co.name_cn, company_name_en: co.name_en, company_tel: co.tel,
-        client_name_en: cl.name_en,
-        supplier_name: su.name,
-        currency: orderData.currency, trade_terms: orderData.trade_terms,
-        loading_port: orderData.loading_port, destination_port: orderData.destination_port,
-        delivery_date: orderData.delivery_date, payment_terms: orderData.payment_terms
-      });
-      Object.assign(orderData, docs);
-
-      // JSON 字段需序列化为字符串（MySQL JSON 列要求）
-      for (const f of ['purchase_contract', 'production_order', 'booking_data', 'customs_data', 'decl_data']) {
-        if (orderData[f] && typeof orderData[f] === 'object') {
-          orderData[f] = JSON.stringify(orderData[f]);
-        }
-      }
+      // 报关责任为「请选择」：此处不再预生成单据（购销合同/生产任务单/订舱委托书/报关要素/清关资料），
+      // 由用户在外销订单编辑时选择报关责任后，orders.routes.js PUT 检测到「请选择 → 正式值」再自动生成
 
       // 8. 写入订单主表 + 明细
       const [r] = await conn.query('INSERT INTO orders SET ?', orderData);
@@ -289,7 +248,7 @@ router.post(
       await conn.commit();
       res.success(
         { id: orderId, pi_number: piNumber, quotation_id: quoteId, total_amount: orderData.total_amount },
-        '报价单已转为正式 PI'
+        '报价单已转为正式 PI，报关责任请选择，请在外销订单中编辑确认'
       );
     } catch (e) {
       await conn.rollback();
