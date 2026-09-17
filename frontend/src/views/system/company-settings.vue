@@ -71,7 +71,7 @@
                 placeholder="Arbitration 条款文本，将默认填入合同/PI 模板"
               />
             </el-form-item>
-            <el-form-item label="冲裁条款">
+            <el-form-item label="仲裁条款">
               <el-input
                 v-model="financeForm.award_clause"
                 type="textarea" :rows="4"

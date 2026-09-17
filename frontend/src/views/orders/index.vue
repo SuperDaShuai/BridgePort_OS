@@ -107,12 +107,6 @@
               <el-option v-for="s in supplierOptions" :key="s.id" :label="s.name" :value="s.id" />
             </el-select>
           </el-form-item>
-          <el-form-item label="结算币种">
-            <el-select v-model="form.currency" style="width: 100%">
-              <el-option value="USD" label="USD ($)" />
-              <el-option value="RMB" label="RMB (¥)" />
-            </el-select>
-          </el-form-item>
           <el-form-item label="贸易条款">
             <el-select v-model="form.trade_terms" style="width: 100%">
               <el-option value="FOB" label="FOB" />
@@ -121,6 +115,9 @@
               <el-option value="EXW" label="EXW" />
               <el-option value="DDP" label="DDP" />
             </el-select>
+          </el-form-item>
+          <el-form-item label="起运港">
+            <el-input v-model="form.loading_port" placeholder="如: Ningbo, China" />
           </el-form-item>
           <el-form-item label="报关责任">
             <el-select v-model="form.customs_responsibility" style="width: 100%">
@@ -164,9 +161,6 @@
             >
               <el-option v-for="t in paymentTermOptions" :key="t.id" :label="t.term_text" :value="t.term_text" />
             </el-select>
-          </el-form-item>
-          <el-form-item label="起运港">
-            <el-input v-model="form.loading_port" placeholder="如: Ningbo, China" />
           </el-form-item>
           <el-form-item label="目的港">
             <el-input v-model="form.destination_port" placeholder="选择客户后自动填充" />
@@ -502,7 +496,8 @@ async function openCreate() {
 
 async function openEdit(row) {
   const detail = await getOrder(row.id)
-  priceCurrency.value = 'RMB' // 编辑时默认人民币显示，用户可点击切换
+  // 币种合并：订单结算币种由明细单价币种开关统一驱动，按订单存储币种初始化开关
+  priceCurrency.value = detail.currency === 'USD' ? 'USD' : 'RMB'
   detail.show_special_req = !!detail.show_special_req
   detail.show_stamp = !!detail.show_stamp
   detail.show_hs_code = !!detail.show_hs_code
@@ -561,6 +556,8 @@ async function onSave() {
   }
   const payload = {
     ...form.value,
+    // 结算币种 = 明细单价币种开关当前状态（两者已合并，PI 金额符号与大写金额由此决定）
+    currency: priceCurrency.value,
     show_special_req: form.value.show_special_req ? 1 : 0,
     show_stamp: form.value.show_stamp ? 1 : 0,
     show_hs_code: form.value.show_hs_code ? 1 : 0,
@@ -774,20 +771,22 @@ function buildPiHtml(order) {
     </div>
   ` : ''
 
-  // 签章区：优先企业配置上传的 seal_img（base64），无则回退 public/seal.png 静态文件
+  // 签章区：透明底签章图覆盖在 FOR AND ON BEHALF OF SELLER 文字上方，轻微倾斜仿真效果
   const signHtml = order.show_stamp
-    ? `<img src="${company.seal_img || '/seal.png'}" style="max-width:220px; max-height:130px; display:block; margin-top:4px;" alt="SEAL" />`
+    ? `<div style="position:relative; display:inline-block; width:220px; height:48px;">
+        <img src="${company.seal_img || '/seal.png'}" style="position:absolute; left:50%; top:-15px; transform:translate(-50%,-50%) rotate(-8deg); max-width:225px; max-height:115px; z-index:1;" alt="SEAL" />
+      </div>`
     : `<div style="margin-top:35px; border-bottom:1px solid #94a3b8; width:180px; display:inline-block;"></div><p style="margin-top:4px; color:#64748b; font-size:9px;">Authorized Signature & Chop</p>`
 
   const signatures = `
-    <div style="margin-top:40px; display:flex; justify-content:space-between; font-size:11px;">
+    <div style="margin-top:16px; display:flex; justify-content:space-between; font-size:11px; line-height:1.4;">
       <div style="text-align:left;">
-        <p><strong>ACCEPTED & CONFIRMED BY BUYER:</strong><br>${client.name_en || 'BUYER'}</p>
-        <div style="margin-top:35px; border-bottom:1px solid #94a3b8; width:180px;"></div>
-        <p style="margin-top:4px; color:#64748b; font-size:9px;">Authorized Signature & Chop</p>
+        <p style="margin:0;"><strong>ACCEPTED & CONFIRMED BY BUYER:</strong><br>${client.name_en || 'BUYER'}</p>
+        <div style="margin-top:20px; border-bottom:1px solid #94a3b8; width:180px;"></div>
+        <p style="margin:4px 0 0; color:#64748b; font-size:9px;">Authorized Signature & Chop</p>
       </div>
       <div style="text-align:right;">
-        <p><strong>FOR AND ON BEHALF OF SELLER:</strong><br>${company.name_en || ''}</p>
+        <p style="margin:0;"><strong>FOR AND ON BEHALF OF SELLER:</strong><br>${company.name_en || ''}</p>
         ${signHtml}
       </div>
     </div>
