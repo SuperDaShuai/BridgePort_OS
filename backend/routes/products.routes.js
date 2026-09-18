@@ -5,12 +5,12 @@ const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers'
 const router = express.Router();
 
 const ALLOWED = [
-  'model', 'our_model', 'hs_code', 'supplier_id', 'name_cn', 'name_en', 'spec',
+  'model', 'our_model', 'hs_code', 'supplier_id', 'name_cn', 'name_en', 'spec', 'spec_cn', 'remark',
   'prod_length', 'prod_width', 'prod_height',
   'box_length', 'box_width', 'box_height',
   'ctn_length', 'ctn_width', 'ctn_height',
   'pcs_per_ctn', 'ctn_cbm', 'est_qty_20gp', 'est_qty_40gp', 'est_qty_40hq',
-  'net_weight_kg', 'gross_weight_kg', 'purchase_cost_rmb', 'export_price_usd', 'img_url'
+  'net_weight_kg', 'gross_weight_kg', 'unit_weight_kg', 'purchase_cost_rmb', 'export_price_usd', 'delivery_period', 'img_url'
 ];
 const REQUIRED = ['model', 'hs_code', 'name_en', 'purchase_cost_rmb'];
 
@@ -23,8 +23,8 @@ router.get(
     const conditions = [];
     const params = [];
     if (q) {
-      conditions.push('(p.model LIKE ? OR p.our_model LIKE ? OR p.name_cn LIKE ? OR p.name_en LIKE ? OR p.hs_code LIKE ?)');
-      params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+      conditions.push('(p.model LIKE ? OR p.our_model LIKE ? OR p.name_cn LIKE ? OR p.name_en LIKE ? OR p.hs_code LIKE ? OR p.spec_cn LIKE ? OR p.remark LIKE ?)');
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
     }
     if (supplierId) {
       conditions.push('p.supplier_id = ?');

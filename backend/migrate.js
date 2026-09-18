@@ -620,6 +620,29 @@ const migrations = [
         await runSQL(conn, `ALTER TABLE orders ADD COLUMN show_hs_code TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'PI是否显示HS编码行 0=隐藏 1=显示' AFTER show_stamp`);
       }
     }
+  },
+
+  // ===== 023 · 产品数据库扩展字段 =====
+  {
+    id: '023',
+    desc: 'products 新增 spec_cn(中文规格描述) / remark(备注) / unit_weight_kg(单个重量) / delivery_period(交货期)',
+    async check(conn) {
+      if (!(await tableExists(conn, 'products'))) return true;
+      return await columnExists(conn, 'products', 'spec_cn');
+    },
+    async up(conn) {
+      const cols = [
+        ['spec_cn', "ALTER TABLE products ADD COLUMN spec_cn TEXT NULL DEFAULT NULL COMMENT '中文规格描述' AFTER spec"],
+        ['remark', "ALTER TABLE products ADD COLUMN remark TEXT NULL DEFAULT NULL COMMENT '备注' AFTER spec_cn"],
+        ['unit_weight_kg', "ALTER TABLE products ADD COLUMN unit_weight_kg DECIMAL(10,3) NULL DEFAULT NULL COMMENT '单个重量(kg)' AFTER gross_weight_kg"],
+        ['delivery_period', "ALTER TABLE products ADD COLUMN delivery_period VARCHAR(100) NULL DEFAULT NULL COMMENT '交货期' AFTER remark"]
+      ];
+      for (const [col, sql] of cols) {
+        if (!(await columnExists(conn, 'products', col))) {
+          await runSQL(conn, sql);
+        }
+      }
+    }
   }
 ];
 

@@ -45,7 +45,7 @@
           <span v-else style="color: #c0c4cc">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="我司型号 / 供应商" width="150" show-overflow-tooltip>
+      <el-table-column label="供应商型号 / 供应商" width="150" show-overflow-tooltip>
         <template #default="{ row }">
           <strong>{{ row.our_model || row.model }}</strong>
           <div style="font-size: 11px; color: #909399; margin-top: 2px">{{ row.supplier_name || '未绑定' }}</div>
@@ -56,13 +56,17 @@
           {{ row.name_cn || '—' }}
         </template>
       </el-table-column>
-      <el-table-column label="英文品名与规格" min-width="220" show-overflow-tooltip>
+      <el-table-column label="英文品名与规格" min-width="110" show-overflow-tooltip>
         <template #default="{ row }">
           <strong>{{ row.name_en }}</strong>
           <div v-if="row.spec" style="font-size: 10px; color: #909399; margin-top: 4px; border-top: 1px dashed #ebeef5; padding-top: 2px">{{ row.spec }}</div>
         </template>
       </el-table-column>
-      <el-table-column prop="hs_code" label="HS编码" width="100" />
+      <el-table-column prop="hs_code" label="HS编码" width="110" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span style="white-space: nowrap;">{{ row.hs_code || '—' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="尺寸 (cm)" width="120">
         <template #default="{ row }">
           <div style="font-size: 11px; line-height: 1.6; color: #606266">
@@ -80,8 +84,19 @@
           </div>
         </template>
       </el-table-column>
+      <el-table-column label="单个重量(kg)" prop="unit_weight_kg" width="100" align="right">
+        <template #default="{ row }">
+          {{ row.unit_weight_kg != null ? Number(row.unit_weight_kg).toFixed(3) : '—' }}
+        </template>
+      </el-table-column>
       <el-table-column prop="purchase_cost_rmb" label="采购价(¥)" width="100" align="right" />
       <el-table-column prop="export_price_usd" label="外销价(¥)" width="100" align="right" />
+      <el-table-column label="交货期" prop="delivery_period" width="100" show-overflow-tooltip />
+      <el-table-column label="备注" prop="remark" min-width="140" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span style="white-space: pre-wrap;">{{ row.remark || '—' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="160" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="info" @click="openView(row)">查看</el-button>
@@ -119,13 +134,28 @@
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="我司型号">
-              <el-input v-model="form.our_model" placeholder="我司内部型号" />
+            <el-form-item label="供应商型号">
+              <el-input v-model="form.our_model" placeholder="供应商型号" />
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="HS编码" prop="hs_code">
-              <el-input v-model="form.hs_code" />
+              <el-select
+                v-model="form.hs_code"
+                filterable
+                allow-create
+                default-first-option
+                clearable
+                placeholder="选择或输入HS编码"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="h in hsCodeOptions"
+                  :key="h.id"
+                  :label="h.hs_code"
+                  :value="h.hs_code"
+                />
+              </el-select>
             </el-form-item>
           </el-col>
           <el-col :span="8">
@@ -150,9 +180,24 @@
               <el-input v-model="form.name_en" />
             </el-form-item>
           </el-col>
-          <el-col :span="24">
-            <el-form-item label="规格描述">
+          <el-col :span="12">
+            <el-form-item label="英文规格描述">
               <el-input v-model="form.spec" type="textarea" :rows="2" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="中文规格描述">
+              <el-input v-model="form.spec_cn" type="textarea" :rows="2" placeholder="关联到生产任务单货物名称及规格" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="备注">
+              <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="多行备注，列表页可换行显示" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="交货期">
+              <el-input v-model="form.delivery_period" placeholder="如: 30 days" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -208,6 +253,11 @@
 
         <el-divider content-position="left">重量与装箱</el-divider>
         <el-row :gutter="16">
+          <el-col :span="8">
+            <el-form-item label="单个重量(kg)">
+              <el-input-number v-model="form.unit_weight_kg" :controls="false" :precision="3" style="width: 100%" />
+            </el-form-item>
+          </el-col>
           <el-col :span="8">
             <el-form-item label="箱净重(kg)">
               <el-input-number v-model="form.net_weight_kg" :controls="false" style="width: 100%" />
@@ -294,6 +344,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import { listProducts, createProduct, updateProduct, deleteProduct } from '@/api/products'
 import { listSuppliers } from '@/api/suppliers'
+import { listHsCodes } from '@/api/hsCodes'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
@@ -304,6 +355,7 @@ const saving = ref(false)
 const list = ref([])
 const total = ref(0)
 const supplierOptions = ref([])
+const hsCodeOptions = ref([])
 const query = reactive({ q: '', supplierId: null, page: 1, pageSize: 10 })
 
 const dialogVisible = ref(false)
@@ -321,13 +373,13 @@ const NUMERIC_FIELDS = [
   'prod_length', 'prod_width', 'prod_height',
   'box_length', 'box_width', 'box_height',
   'ctn_length', 'ctn_width', 'ctn_height',
-  'net_weight_kg', 'gross_weight_kg', 'pcs_per_ctn', 'ctn_cbm',
+  'net_weight_kg', 'gross_weight_kg', 'unit_weight_kg', 'pcs_per_ctn', 'ctn_cbm',
   'est_qty_20gp', 'est_qty_40gp', 'est_qty_40hq',
   'purchase_cost_rmb', 'export_price_usd'
 ]
 
 const blankForm = () => ({
-  model: '', our_model: '', hs_code: '', supplier_id: null, name_cn: '', name_en: '', spec: '', img_url: '',
+  model: '', our_model: '', hs_code: '', supplier_id: null, name_cn: '', name_en: '', spec: '', spec_cn: '', remark: '', delivery_period: '', img_url: '',
   ...Object.fromEntries(NUMERIC_FIELDS.map((k) => [k, undefined]))
 })
 
@@ -406,6 +458,15 @@ async function loadSuppliers() {
   }
 }
 
+async function loadHsCodes() {
+  try {
+    const d = await listHsCodes({ page: 1, pageSize: 500 })
+    hsCodeOptions.value = d.list
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
 function onSearch() {
   query.page = 1
   loadList()
@@ -469,5 +530,6 @@ async function onDelete(row) {
 onMounted(() => {
   loadList()
   loadSuppliers()
+  loadHsCodes()
 })
 </script>

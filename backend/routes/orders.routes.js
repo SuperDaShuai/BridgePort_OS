@@ -146,7 +146,11 @@ router.get(
     const [[order]] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
     if (!order) return res.fail('订单不存在', 404);
     const [items] = await pool.query(
-      'SELECT * FROM order_items WHERE order_id = ? ORDER BY id ASC',
+      `SELECT oi.*, p.spec_cn
+       FROM order_items oi
+       LEFT JOIN products p ON oi.product_id = p.id
+       WHERE oi.order_id = ?
+       ORDER BY oi.id ASC`,
       [order.id]
     );
     res.success({ ...order, items });
