@@ -23,7 +23,11 @@ export const useUserStore = defineStore('user', {
     displayName: (s) => s.profile?.display_name || s.profile?.username || '',
     permissionLevel: (s) => s.profile?.permission_level ?? 99,
     // 管理员（level <= 1）可编辑/删除，其他员工只读
-    canEdit: (s) => (s.profile?.permission_level ?? 99) <= 1
+    canEdit: (s) => (s.profile?.permission_level ?? 99) <= 1,
+    // 数据可见性：隐藏采购价与利润字段
+    hidePurchaseAndProfit: (s) => !!s.profile?.hide_purchase_and_profit,
+    // 数据可见性：隐藏供应商信息
+    hideSupplierInfo: (s) => !!s.profile?.hide_supplier_info
   },
   actions: {
     async login(username, password) {
@@ -39,9 +43,11 @@ export const useUserStore = defineStore('user', {
       localStorage.removeItem(TOKEN_KEY)
       localStorage.removeItem(PROFILE_KEY)
     },
-    // 权限判断：等级数字越小权限越大；未标注 permission 的路由/菜单全员可见
-    canSee(requiredLevel) {
-      return requiredLevel === undefined || this.permissionLevel <= requiredLevel
+    // 权限判断：传数字表示「等级 ≤ 该值」可见；传数组表示「等级在列表内」可见；未传全员可见
+    canSee(required) {
+      if (required === undefined) return true
+      const lvl = this.permissionLevel
+      return Array.isArray(required) ? required.includes(lvl) : lvl <= required
     }
   }
 })

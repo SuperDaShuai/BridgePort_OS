@@ -46,6 +46,9 @@ app.use('/api/quotations', require('./routes/quotations.routes'));
 app.use('/api/samples', require('./routes/samples.routes'));
 app.use('/api/orders', require('./routes/orders.routes'));
 
+// 操作日志（只读查询）
+app.use('/api/operation-logs', require('./routes/operation-logs.routes'));
+
 // 404 兜底
 app.use((req, res) => {
   res.fail(`接口不存在: ${req.method} ${req.originalUrl}`, 404);

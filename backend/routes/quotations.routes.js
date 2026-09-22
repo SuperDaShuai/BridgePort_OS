@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
-const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers');
+const { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership } = require('../utils/helpers');
+const { logOperation, ownerOf } = require('../utils/operation-log');
 
 const router = express.Router();
 
@@ -74,6 +75,11 @@ router.get(
       conditions.push('qt.status = ?');
       params.push(status);
     }
+    // 业务员只能看到自己创建的报价单
+    if (isScopedOperator(req)) {
+      conditions.push('qt.owner_id = ?');
+      params.push(req.operator.id);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const [[{ total }]] = await pool.query(
@@ -98,6 +104,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const [[quotation]] = await pool.query('SELECT * FROM quotations WHERE id = ?', [req.params.id]);
     if (!quotation) return res.fail('报价单不存在', 404);
+    const denied = checkOwnership(quotation, req, '报价单');
+    if (denied) return res.fail(denied, 404);
     const [items] = await pool.query(
       'SELECT * FROM quotation_items WHERE quotation_id = ? ORDER BY id ASC',
       [quotation.id]
@@ -122,6 +130,8 @@ router.post(
         [quoteId]
       );
       if (!quote) { await conn.rollback(); return res.fail('报价单不存在', 404); }
+      const denied = checkOwnership(quote, req, '报价单');
+      if (denied) { await conn.rollback(); return res.fail(denied, 404); }
 
       // 防重复转 PI
       if (quote.status === '已转PI') {
@@ -227,6 +237,9 @@ router.post(
         );
       });
       orderData.total_amount = Number(totalAmount.toFixed(2));
+      // 负责人：转 PI 的操作人
+      orderData.owner_name = ownerOf(req.operator);
+      orderData.owner_id = req.operator.id;
 
       // 报关责任为「请选择」：此处不再预生成单据（购销合同/生产任务单/订舱委托书/报关要素/清关资料），
       // 由用户在外销订单编辑时选择报关责任后，orders.routes.js PUT 检测到「请选择 → 正式值」再自动生成
@@ -244,6 +257,12 @@ router.post(
         'UPDATE quotations SET status = ? WHERE id = ?',
         ['已转PI', quoteId]
       );
+
+      // 记录操作日志：转 PI 生成了新订单
+      await logOperation(conn, {
+        module: 'order', action: '新增',
+        targetId: orderId, targetNo: piNumber, operator: req.operator
+      });
 
       await conn.commit();
       res.success(
@@ -305,6 +324,9 @@ router.post(
 
     const missing = REQUIRED.filter((k) => !data[k]);
     if (missing.length) return res.fail(`缺少必填字段: ${missing.join(', ')}`, 400);
+    // 负责人自动写入当前登录人
+    data.owner_name = ownerOf(req.operator);
+    data.owner_id = req.operator.id;
     const items = normalizeItems(req.body.items);
 
     const conn = await pool.getConnection();
@@ -317,6 +339,10 @@ router.post(
           [items.map((row) => [r.insertId, ...row])]
         );
       }
+      await logOperation(conn, {
+        module: 'quotation', action: '新增',
+        targetId: r.insertId, targetNo: data.quotation_number, operator: req.operator
+      });
       await conn.commit();
       res.success({ id: r.insertId, item_count: items.length }, '创建成功');
     } catch (e) {
@@ -335,6 +361,12 @@ router.put(
     const data = pickFields(req.body, ALLOWED);
     const hasItems = Array.isArray(req.body.items);
     if (Object.keys(data).length === 0 && !hasItems) return res.fail('无可更新字段', 400);
+
+    // 归属校验：业务员只能修改自己的报价单
+    const [[before]] = await pool.query('SELECT * FROM quotations WHERE id = ?', [req.params.id]);
+    if (!before) return res.fail('报价单不存在', 404);
+    const denied = checkOwnership(before, req, '报价单');
+    if (denied) return res.fail(denied, 404);
 
     const conn = await pool.getConnection();
     try {
@@ -356,6 +388,12 @@ router.put(
           );
         }
       }
+      // 取业务编号记录操作日志
+      const [[qRow]] = await conn.query('SELECT quotation_number FROM quotations WHERE id = ?', [req.params.id]);
+      await logOperation(conn, {
+        module: 'quotation', action: '修改',
+        targetId: Number(req.params.id), targetNo: qRow?.quotation_number, operator: req.operator
+      });
       await conn.commit();
       res.success({ id: Number(req.params.id) }, '更新成功');
     } catch (e) {
@@ -372,6 +410,12 @@ router.put(
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
+    // 归属校验：业务员只能删除自己的报价单
+    const [[before]] = await pool.query('SELECT * FROM quotations WHERE id = ?', [req.params.id]);
+    if (!before) return res.fail('报价单不存在', 404);
+    const denied = checkOwnership(before, req, '报价单');
+    if (denied) return res.fail(denied, 404);
+
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();

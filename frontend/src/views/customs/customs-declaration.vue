@@ -40,7 +40,7 @@
       </el-table-column>
       <el-table-column label="操作 (补录信息)" width="180" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" @click="openCustomsEdit(row)">编辑清关外销单据</el-button>
+          <el-button v-if="canMaintain" size="small" @click="openCustomsEdit(row)">编辑清关外销单据</el-button>
         </template>
       </el-table-column>
       <template #empty>暂无「我司代办报关」的订单</template>
@@ -56,8 +56,8 @@
       class="doc-dialog"
     >
       <div class="doc-toolbar no-print">
-        <el-button v-if="previewType === 'decl'" type="primary" plain :icon="Edit" @click="openDeclEditFromPreview">编辑草单要素</el-button>
-        <el-button v-else type="primary" plain :icon="Edit" @click="openCustomsEditFromPreview">编辑单据信息</el-button>
+        <el-button v-if="canMaintain && previewType === 'decl'" type="primary" plain :icon="Edit" @click="openDeclEditFromPreview">编辑草单要素</el-button>
+        <el-button v-else-if="canMaintain" type="primary" plain :icon="Edit" @click="openCustomsEditFromPreview">编辑单据信息</el-button>
         <el-button type="success" :icon="Download" @click="onExportExcel">下载 Excel (.xls)</el-button>
         <el-button type="warning" :icon="Printer" @click="onPrint">打印 / 另存为 PDF</el-button>
       </div>
@@ -259,6 +259,11 @@ import { listOrders, getOrder, updateOrder } from '@/api/orders'
 import { listClients } from '@/api/clients'
 import { getCompanySettings } from '@/api/companySettings'
 import { formatMoney, numberToEnglishWords, getOrderTotals, printDocument, exportExcel } from '@/utils/docUtils'
+import { useUserStore } from '@/stores/user'
+
+// 单据维护权限：业务员（等级3）仅可下载打印，编辑由主管及以上操作
+const userStore = useUserStore()
+const canMaintain = userStore.permissionLevel <= 2
 
 const loading = ref(false)
 const saving = ref(false)

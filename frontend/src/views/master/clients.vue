@@ -105,7 +105,8 @@ import { listClients, getClient, createClient, updateClient, deleteClient } from
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
-const canEdit = userStore.canEdit
+// 管理员/主管/业务员可增删改客户（业务员仅能操作自己添加的，由后端归属校验）；财务跟单只读
+const canEdit = userStore.permissionLevel <= 3
 
 const loading = ref(false)
 const saving = ref(false)

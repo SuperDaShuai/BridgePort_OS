@@ -12,7 +12,7 @@ const ALLOWED = [
   'pcs_per_ctn', 'ctn_cbm', 'est_qty_20gp', 'est_qty_40gp', 'est_qty_40hq',
   'net_weight_kg', 'gross_weight_kg', 'unit_weight_kg', 'purchase_cost_rmb', 'export_price_usd', 'delivery_period', 'img_url'
 ];
-const REQUIRED = ['model', 'hs_code', 'name_en', 'purchase_cost_rmb'];
+const REQUIRED = ['model', 'hs_code', 'name_en'];
 
 router.get(
   '/',

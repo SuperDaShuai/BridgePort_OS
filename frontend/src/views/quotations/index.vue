@@ -69,6 +69,9 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="负责人" width="90" align="center">
+        <template #default="{ row }">{{ row.owner_name || '—' }}</template>
+      </el-table-column>
       <el-table-column label="操作与流转" width="270" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="success" @click="onPreview(row)">📄 预览</el-button>
@@ -139,6 +142,9 @@
             >
               <el-option v-for="s in supplierOptions" :key="s.id" :label="s.name" :value="s.id" />
             </el-select>
+          </el-form-item>
+          <el-form-item label="负责人">
+            <el-input v-model="form.owner_name" disabled placeholder="创建后自动记录" />
           </el-form-item>
         </div>
 
@@ -350,8 +356,10 @@ import { listProducts } from '@/api/products'
 import { listSuppliers } from '@/api/suppliers'
 import { getCompanySettings } from '@/api/companySettings'
 import { listPaymentTerms } from '@/api/paymentTerms'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
 
 const STATUSES = ['草稿', '已发送', '已接受', '已失效', '已转PI']
 const CURRENCIES = { USD: 'USD ($)', RMB: 'RMB (¥)' }
@@ -399,7 +407,7 @@ const blankForm = () => ({
   quotation_number: '', quotation_date: '', valid_until: '', client_id: null, supplier_id: null,
   currency: 'USD', price_terms: 'FOB', lead_time: '', payment_terms: '',
   loading_port: '', destination_port: '', total_amount: undefined,
-  status: '草稿', remark: '', items: []
+  status: '草稿', remark: '', items: [], owner_name: ''
 })
 
 const blankItem = () => ({
@@ -517,6 +525,8 @@ function onSearch() { query.page = 1; loadList() }
 
 async function openCreate() {
   form.value = blankForm()
+  // 负责人 = 当前登录人（新增时展示，编辑时展示已保存的负责人）
+  form.value.owner_name = userStore.displayName
   // 自动生成报价单号
   try {
     form.value.quotation_number = await getNextQuotationNumber()

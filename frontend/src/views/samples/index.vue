@@ -51,6 +51,9 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="负责人" width="90" align="center">
+        <template #default="{ row }">{{ row.owner_name || '—' }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="130" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -97,6 +100,9 @@
             <el-select v-model="form.feedback_status" style="width: 100%">
               <el-option v-for="s in FEEDBACK_STATUSES" :key="s" :label="s" :value="s" />
             </el-select>
+          </el-form-item>
+          <el-form-item label="负责人">
+            <el-input v-model="form.owner_name" disabled placeholder="创建后自动记录" />
           </el-form-item>
         </div>
 
@@ -203,6 +209,9 @@ import {
 import { listClients } from '@/api/clients'
 import { listProducts } from '@/api/products'
 import { listRfqs } from '@/api/rfqs'
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
 
 const FEEDBACK_STATUSES = ['准备中', '已寄出', '客户已签收', '确认合格', '需重新打样']
 const feedbackTag = {
@@ -231,7 +240,7 @@ const blankForm = () => ({
   courier_name: '', tracking_number: '', sent_date: '',
   sample_fee: undefined, freight_cost: undefined,
   feedback_status: '准备中', client_feedback_note: '',
-  items: []
+  items: [], owner_name: ''
 })
 const blankItem = () => ({
   product_id: null, model: '', name_en: '', hs_code: '',
@@ -298,6 +307,8 @@ function addItemRow() { form.value.items.push(blankItem()) }
 
 async function openCreate() {
   form.value = blankForm()
+  // 负责人 = 当前登录人（新增时展示，编辑时展示已保存的负责人）
+  form.value.owner_name = userStore.displayName
   try { form.value.sample_number = await getNextSampleNumber() } catch {}
   form.value.sent_date = new Date().toISOString().slice(0, 10)
   addItemRow()

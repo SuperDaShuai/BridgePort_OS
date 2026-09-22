@@ -35,7 +35,7 @@
       </el-table-column>
       <el-table-column label="操作" width="140" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button plain size="small" @click="openEdit(row)">编辑托书信息</el-button>
+          <el-button v-if="canMaintain" plain size="small" @click="openEdit(row)">编辑托书信息</el-button>
         </template>
       </el-table-column>
       <template #empty>暂无订单数据，请先在外销订单中创建订单</template>
@@ -197,6 +197,11 @@ import { listOrders, getOrder, updateOrder } from '@/api/orders'
 import { getCompanySettings } from '@/api/companySettings'
 import { listClients } from '@/api/clients'
 import { getOrderTotals, printDocument, exportExcel } from '@/utils/docUtils'
+import { useUserStore } from '@/stores/user'
+
+// 托书维护权限：业务员（等级3）仅可下载打印，编辑由主管及以上操作
+const userStore = useUserStore()
+const canMaintain = userStore.permissionLevel <= 2
 
 const loading = ref(false)
 const saving = ref(false)

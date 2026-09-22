@@ -25,7 +25,9 @@ router.post(
       username: op.username,
       display_name: op.display_name,
       role: op.role,
-      permission_level: op.permission_level
+      permission_level: op.permission_level,
+      hide_purchase_and_profit: !!op.hide_purchase_and_profit,
+      hide_supplier_info: !!op.hide_supplier_info
     };
     const token = jwt.sign(payload, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRES_IN || '12h'
@@ -40,7 +42,7 @@ router.get(
   auth,
   asyncHandler(async (req, res) => {
     const [[op]] = await pool.query(
-      'SELECT id, username, display_name, role, permission_level, status FROM operators WHERE id = ?',
+      'SELECT id, username, display_name, role, permission_level, status, hide_purchase_and_profit, hide_supplier_info FROM operators WHERE id = ?',
       [req.operator.id]
     );
     if (!op || !op.status) return res.fail('账号不存在或已禁用', 401);

@@ -1,7 +1,8 @@
 const express = require('express');
 const pool = require('../config/db');
-const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers');
+const { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership } = require('../utils/helpers');
 const { generateDefaultDocuments } = require('../utils/documents');
+const { logOperation, ownerOf } = require('../utils/operation-log');
 
 const router = express.Router();
 
@@ -30,7 +31,7 @@ const ITEM_FIELDS = [
   'product_id', 'model', 'name_en', 'hs_code', 'unit',
   'img_url', 'spec',
   'pcs_per_ctn', 'ctns', 'qty',
-  'price', 'cost_cny', 'subtotal_amount',
+  'price', 'price_rmb', 'cost_cny', 'subtotal_amount',
   'nw_per_ctn', 'gw_per_ctn', 'cbm_per_ctn'
 ];
 
@@ -114,6 +115,11 @@ router.get(
       conditions.push('o.customs_responsibility = ?');
       params.push(customsResp);
     }
+    // 业务员只能看到自己负责的订单
+    if (isScopedOperator(req)) {
+      conditions.push('o.owner_id = ?');
+      params.push(req.operator.id);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const [[{ total }]] = await pool.query(
@@ -145,6 +151,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const [[order]] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
     if (!order) return res.fail('订单不存在', 404);
+    const denied = checkOwnership(order, req, '订单');
+    if (denied) return res.fail(denied, 404);
     const [items] = await pool.query(
       `SELECT oi.*, p.spec_cn
        FROM order_items oi
@@ -208,6 +216,9 @@ router.post(
 
     const missing = REQUIRED.filter((k) => !data[k]);
     if (missing.length) return res.fail(`缺少必填字段: ${missing.join(', ')}`, 400);
+    // 负责人自动写入当前登录人
+    data.owner_name = ownerOf(req.operator);
+    data.owner_id = req.operator.id;
 
     // 自动计算订单总金额（若前端未传）
     const items = normalizeItems(req.body.items);
@@ -251,6 +262,10 @@ router.post(
         `INSERT INTO order_items (order_id, ${ITEM_FIELDS.join(', ')}) VALUES ?`,
         [items.map((row) => [r.insertId, ...row])]
       );
+      await logOperation(conn, {
+        module: 'order', action: '新增',
+        targetId: r.insertId, targetNo: data.pi_number, operator: req.operator
+      });
       await conn.commit();
       res.success({ id: r.insertId, item_count: items.length, pi_number: data.pi_number }, '创建成功');
     } catch (e) {
@@ -274,6 +289,14 @@ router.put(
     if (data.show_stamp !== undefined) data.show_stamp = toBool(data.show_stamp);
     if (data.show_hs_code !== undefined) data.show_hs_code = toBool(data.show_hs_code);
     const hasItems = Array.isArray(req.body.items);
+
+    // 业务员不可编辑单据数据（订舱/报关/清关/购销合同/生产任务单均由主管维护）
+    if (Number(req.operator?.permission_level) === 3) {
+      for (const f of ['purchase_contract', 'production_order', 'booking_data', 'customs_data', 'decl_data']) {
+        delete data[f];
+      }
+    }
+
     if (Object.keys(data).length === 0 && !hasItems) return res.fail('无可更新字段', 400);
 
     const conn = await pool.getConnection();
@@ -288,6 +311,11 @@ router.put(
       if (!oldRow) {
         await conn.rollback();
         return res.fail('订单不存在', 404);
+      }
+      const denied = checkOwnership(oldRow, req, '订单');
+      if (denied) {
+        await conn.rollback();
+        return res.fail(denied, 404);
       }
 
       let docsGenerated = false;
@@ -338,6 +366,11 @@ router.put(
           );
         }
       }
+      // 记录操作日志（oldRow 在事务开头已读取，含 pi_number）
+      await logOperation(conn, {
+        module: 'order', action: '修改',
+        targetId: Number(req.params.id), targetNo: oldRow.pi_number, operator: req.operator
+      });
       await conn.commit();
       res.success(
         { id: Number(req.params.id), docs_generated: docsGenerated },
@@ -366,6 +399,15 @@ router.delete(
         'SELECT quotation_id FROM orders WHERE id = ?',
         [orderId]
       );
+      if (!orderBefore) {
+        await conn.rollback();
+        return res.fail('订单不存在', 404);
+      }
+      const denied = checkOwnership(orderBefore, req, '订单');
+      if (denied) {
+        await conn.rollback();
+        return res.fail(denied, 404);
+      }
 
       await conn.query('DELETE FROM order_items WHERE order_id = ?', [orderId]);
       const [r] = await conn.query('DELETE FROM orders WHERE id = ?', [orderId]);

@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
-const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers');
+const { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership } = require('../utils/helpers');
+const { logOperation, ownerOf } = require('../utils/operation-log');
 
 const router = express.Router();
 
@@ -76,6 +77,11 @@ router.get(
       conditions.push('s.feedback_status = ?');
       params.push(status);
     }
+    // 业务员只能看到自己创建的样品单
+    if (isScopedOperator(req)) {
+      conditions.push('s.owner_id = ?');
+      params.push(req.operator.id);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const [[{ total }]] = await pool.query(
@@ -102,6 +108,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const [[sample]] = await pool.query('SELECT * FROM samples_tracking WHERE id = ?', [req.params.id]);
     if (!sample) return res.fail('样品单不存在', 404);
+    const denied = checkOwnership(sample, req, '样品单');
+    if (denied) return res.fail(denied, 404);
     const [items] = await pool.query(
       'SELECT * FROM sample_items WHERE sample_id = ? ORDER BY id ASC',
       [sample.id]
@@ -150,6 +158,9 @@ router.post(
 
     const missing = REQUIRED.filter((k) => !data[k]);
     if (missing.length) return res.fail(`缺少必填字段: ${missing.join(', ')}`, 400);
+    // 负责人自动写入当前登录人
+    data.owner_name = ownerOf(req.operator);
+    data.owner_id = req.operator.id;
 
     const items = normalizeItems(req.body.items);
     if (items.length === 0) return res.fail('请至少添加一行样品明细', 400);
@@ -162,6 +173,10 @@ router.post(
         `INSERT INTO sample_items (sample_id, ${ITEM_FIELDS.join(', ')}) VALUES ?`,
         [items.map((row) => [r.insertId, ...row])]
       );
+      await logOperation(conn, {
+        module: 'sample', action: '新增',
+        targetId: r.insertId, targetNo: data.sample_number, operator: req.operator
+      });
       await conn.commit();
       res.success({ id: r.insertId, item_count: items.length, sample_number: data.sample_number }, '创建成功');
     } catch (e) {
@@ -182,6 +197,12 @@ router.put(
     const hasItems = Array.isArray(req.body.items);
     if (Object.keys(data).length === 0 && !hasItems) return res.fail('无可更新字段', 400);
 
+    // 归属校验：业务员只能修改自己的样品单
+    const [[before]] = await pool.query('SELECT * FROM samples_tracking WHERE id = ?', [req.params.id]);
+    if (!before) return res.fail('样品单不存在', 404);
+    const denied = checkOwnership(before, req, '样品单');
+    if (denied) return res.fail(denied, 404);
+
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
@@ -200,6 +221,12 @@ router.put(
           );
         }
       }
+      // 取业务编号记录操作日志
+      const [[sRow]] = await conn.query('SELECT sample_number FROM samples_tracking WHERE id = ?', [req.params.id]);
+      await logOperation(conn, {
+        module: 'sample', action: '修改',
+        targetId: Number(req.params.id), targetNo: sRow?.sample_number, operator: req.operator
+      });
       await conn.commit();
       res.success({ id: Number(req.params.id) }, '更新成功');
     } catch (e) {
@@ -216,6 +243,13 @@ router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
     const sampleId = Number(req.params.id);
+
+    // 归属校验：业务员只能删除自己的样品单
+    const [[before]] = await pool.query('SELECT * FROM samples_tracking WHERE id = ?', [sampleId]);
+    if (!before) return res.fail('样品单不存在', 404);
+    const denied = checkOwnership(before, req, '样品单');
+    if (denied) return res.fail(denied, 404);
+
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();

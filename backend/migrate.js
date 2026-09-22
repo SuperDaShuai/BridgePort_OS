@@ -643,6 +643,104 @@ const migrations = [
         }
       }
     }
+  },
+
+  // ===== 024 · 操作跟踪：operation_logs 表 + 四张业务表加负责人 =====
+  {
+    id: '024',
+    desc: '新建 operation_logs 操作日志表；rfqs/quotations/samples_tracking/orders 新增 owner_name 负责人字段',
+    async check(conn) {
+      const hasLogTable = await tableExists(conn, 'operation_logs');
+      const ownerChecks = [];
+      for (const t of ['rfqs', 'quotations', 'samples_tracking', 'orders']) {
+        if (await tableExists(conn, t)) {
+          ownerChecks.push(await columnExists(conn, t, 'owner_name'));
+        }
+      }
+      return hasLogTable && ownerChecks.length === 4 && ownerChecks.every(Boolean);
+    },
+    async up(conn) {
+      if (!(await tableExists(conn, 'operation_logs'))) {
+        await runSQL(conn, `
+          CREATE TABLE operation_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            operator_id INT NULL COMMENT '操作员ID',
+            operator_name VARCHAR(100) NOT NULL COMMENT '操作员账号',
+            operator_display VARCHAR(100) NULL COMMENT '操作员显示名',
+            module VARCHAR(50) NOT NULL COMMENT '模块: rfq/quotation/sample/order',
+            action VARCHAR(20) NOT NULL COMMENT '动作: 新增/修改',
+            target_no VARCHAR(100) NULL COMMENT '业务编号(询盘号/报价单号/样品单号/PI号)',
+            target_id INT NULL COMMENT '业务记录主键ID',
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_module (module),
+            KEY idx_operator (operator_id),
+            KEY idx_created_at (created_at)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='操作日志'
+        `);
+      }
+      const ownerTargets = [
+        ['rfqs', "ALTER TABLE rfqs ADD COLUMN owner_name VARCHAR(100) NULL DEFAULT NULL COMMENT '负责人(创建人)'"],
+        ['quotations', "ALTER TABLE quotations ADD COLUMN owner_name VARCHAR(100) NULL DEFAULT NULL COMMENT '负责人(创建人)'"],
+        ['samples_tracking', "ALTER TABLE samples_tracking ADD COLUMN owner_name VARCHAR(100) NULL DEFAULT NULL COMMENT '负责人(创建人)'"],
+        ['orders', "ALTER TABLE orders ADD COLUMN owner_name VARCHAR(100) NULL DEFAULT NULL COMMENT '负责人(创建人)'"]
+      ];
+      for (const [t, sql] of ownerTargets) {
+        if (await tableExists(conn, t) && !(await columnExists(conn, t, 'owner_name'))) {
+          await runSQL(conn, sql);
+        }
+      }
+    }
+  },
+
+  // ===== 025 · 业务员数据隔离：五张业务表加 owner_id + clients 补 owner_name =====
+  {
+    id: '025',
+    desc: 'rfqs/quotations/samples_tracking/orders/clients 新增 owner_id（业务员数据归属过滤）+ clients 补 owner_name',
+    async check(conn) {
+      const targets = ['rfqs', 'quotations', 'samples_tracking', 'orders', 'clients'];
+      const results = [];
+      for (const t of targets) {
+        if (await tableExists(conn, t)) {
+          results.push(await columnExists(conn, t, 'owner_id'));
+        }
+      }
+      // clients 需同时具备 owner_id 与 owner_name
+      if (results.length === 5 && results.every(Boolean) && (await tableExists(conn, 'clients'))) {
+        results.push(await columnExists(conn, 'clients', 'owner_name'));
+      }
+      return results.length === 6 && results.every(Boolean);
+    },
+    async up(conn) {
+      const targets = [
+        ['rfqs', "ALTER TABLE rfqs ADD COLUMN owner_id INT NULL DEFAULT NULL COMMENT '创建操作员ID'"],
+        ['quotations', "ALTER TABLE quotations ADD COLUMN owner_id INT NULL DEFAULT NULL COMMENT '创建操作员ID'"],
+        ['samples_tracking', "ALTER TABLE samples_tracking ADD COLUMN owner_id INT NULL DEFAULT NULL COMMENT '创建操作员ID'"],
+        ['orders', "ALTER TABLE orders ADD COLUMN owner_id INT NULL DEFAULT NULL COMMENT '创建操作员ID'"],
+        ['clients', "ALTER TABLE clients ADD COLUMN owner_id INT NULL DEFAULT NULL COMMENT '创建操作员ID'"]
+      ];
+      for (const [t, sql] of targets) {
+        if (await tableExists(conn, t) && !(await columnExists(conn, t, 'owner_id'))) {
+          await runSQL(conn, sql);
+        }
+      }
+      if (await tableExists(conn, 'clients') && !(await columnExists(conn, 'clients', 'owner_name'))) {
+        await runSQL(conn, "ALTER TABLE clients ADD COLUMN owner_name VARCHAR(100) NULL DEFAULT NULL COMMENT '负责人(创建人)'");
+      }
+    }
+  },
+
+  // ===== 026 · 订单明细行存储人民币基准价（消除单价币种切换精度漂移） =====
+  {
+    id: '026',
+    desc: 'order_items 新增 price_rmb（人民币基准单价，外销价快照）',
+    async check(conn) {
+      return (await tableExists(conn, 'order_items')) && (await columnExists(conn, 'order_items', 'price_rmb'));
+    },
+    async up(conn) {
+      if (await tableExists(conn, 'order_items') && !(await columnExists(conn, 'order_items', 'price_rmb'))) {
+        await runSQL(conn, "ALTER TABLE order_items ADD COLUMN price_rmb DECIMAL(12,2) NULL DEFAULT NULL COMMENT '人民币基准单价(外销价)'");
+      }
+    }
   }
 ];
 

@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
-const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers');
+const { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership } = require('../utils/helpers');
+const { ownerOf } = require('../utils/operation-log');
 
 const router = express.Router();
 
@@ -27,8 +28,18 @@ router.get(
   asyncHandler(async (req, res) => {
     const { page, pageSize, offset } = parsePagination(req);
     const q = (req.query.q || '').trim();
-    const where = q ? 'WHERE name_en LIKE ? OR country LIKE ? OR main_products LIKE ?' : '';
-    const params = q ? [`%${q}%`, `%${q}%`, `%${q}%`] : [];
+    const conditions = [];
+    const params = [];
+    if (q) {
+      conditions.push('(name_en LIKE ? OR country LIKE ? OR main_products LIKE ?)');
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    }
+    // 业务员只能看到自己添加的客户
+    if (isScopedOperator(req)) {
+      conditions.push('owner_id = ?');
+      params.push(req.operator.id);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM clients ${where}`, params);
     const [rows] = await pool.query(
@@ -45,6 +56,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const [[client]] = await pool.query('SELECT * FROM clients WHERE id = ?', [req.params.id]);
     if (!client) return res.fail('客户不存在', 404);
+    const denied = checkOwnership(client, req, '客户');
+    if (denied) return res.fail(denied, 404);
     const [contacts] = await pool.query(
       'SELECT id, name, position, phone, email, whatsapp, is_primary FROM contacts WHERE owner_type = ? AND owner_id = ? ORDER BY is_primary DESC, id',
       ['CLIENT', client.id]
@@ -59,6 +72,10 @@ router.post(
   asyncHandler(async (req, res) => {
     const data = pickFields(req.body, ALLOWED);
     if (!data.name_en || !data.country) return res.fail('name_en 与 country 为必填', 400);
+
+    // 负责人自动写入当前登录人
+    data.owner_name = ownerOf(req.operator);
+    data.owner_id = req.operator.id;
 
     const conn = await pool.getConnection();
     try {
@@ -84,6 +101,12 @@ router.put(
     const hasContacts = Array.isArray(req.body.contacts);
     if (Object.keys(data).length === 0 && !hasContacts) return res.fail('无可更新字段', 400);
 
+    // 归属校验：业务员只能修改自己的客户
+    const [[before]] = await pool.query('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+    if (!before) return res.fail('客户不存在', 404);
+    const denied = checkOwnership(before, req, '客户');
+    if (denied) return res.fail(denied, 404);
+
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
@@ -105,6 +128,12 @@ router.put(
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
+    // 归属校验：业务员只能删除自己的客户
+    const [[before]] = await pool.query('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+    if (!before) return res.fail('客户不存在', 404);
+    const denied = checkOwnership(before, req, '客户');
+    if (denied) return res.fail(denied, 404);
+
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();

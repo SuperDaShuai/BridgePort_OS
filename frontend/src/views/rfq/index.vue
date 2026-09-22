@@ -44,6 +44,9 @@
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="负责人" width="90" align="center">
+        <template #default="{ row }">{{ row.owner_name || '—' }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="130" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -128,6 +131,11 @@
               </el-select>
             </el-form-item>
           </el-col>
+          <el-col :span="12">
+            <el-form-item label="负责人">
+              <el-input v-model="form.owner_name" disabled placeholder="创建后自动记录" />
+            </el-form-item>
+          </el-col>
           <el-col :span="24">
             <el-form-item label="意向描述">
               <el-input v-model="form.intended_desc" type="textarea" :rows="3" placeholder="客户想要的品类、功能、认证要求等" />
@@ -151,6 +159,9 @@ import { Plus, Search } from '@element-plus/icons-vue'
 import { listRfqs, getRfq, createRfq, updateRfq, deleteRfq } from '@/api/rfqs'
 import { listClients } from '@/api/clients'
 import { listProducts } from '@/api/products'
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
 
 const STAGES = ['跟进中', '已报价', '闭单']
 const stageTag = { 跟进中: 'warning', 已报价: 'primary', 闭单: 'success' }
@@ -174,7 +185,8 @@ const rules = {
 
 const blankForm = () => ({
   rfq_number: '', inquiry_date: '', client_id: null, product_id: null,
-  intended_desc: '', estimated_qty: undefined, target_price: undefined, follow_up_stage: '跟进中'
+  intended_desc: '', estimated_qty: undefined, target_price: undefined, follow_up_stage: '跟进中',
+  owner_name: ''
 })
 
 async function loadList() {
@@ -210,6 +222,8 @@ function onSearch() {
 
 function openCreate() {
   form.value = blankForm()
+  // 负责人 = 当前登录人（新增时展示，编辑时展示已保存的负责人）
+  form.value.owner_name = userStore.displayName
   dialogVisible.value = true
 }
 

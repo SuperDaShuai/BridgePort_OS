@@ -36,7 +36,7 @@
           <el-button link type="primary" @click="openPreview(row, 'inv')">📄 Commercial Invoice</el-button>
           <el-button link type="success" @click="openPreview(row, 'cont')">📝 Sales Contract</el-button>
           <el-button link type="primary" @click="openPreview(row, 'pl')">📦 Packing List</el-button>
-          <el-button link type="primary" @click="openEditClearance(row)">编辑清关资料</el-button>
+          <el-button v-if="canMaintain" link type="primary" @click="openEditClearance(row)">编辑清关资料</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -207,6 +207,11 @@ import { listClients } from '@/api/clients'
 import {
   formatMoney, numberToEnglishWords, getOrderTotals, printDocument, exportExcel
 } from '@/utils/docUtils'
+import { useUserStore } from '@/stores/user'
+
+// 清关资料维护权限：业务员（等级3）仅可下载打印，编辑由主管及以上操作
+const userStore = useUserStore()
+const canMaintain = userStore.permissionLevel <= 2
 
 const loading = ref(false)
 const saving = ref(false)

@@ -45,9 +45,9 @@
           <span v-else style="color: #c0c4cc">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="供应商型号 / 供应商" width="150" show-overflow-tooltip>
+      <el-table-column v-if="!userStore.hideSupplierInfo" label="型号 / 供应商" width="150" show-overflow-tooltip>
         <template #default="{ row }">
-          <strong>{{ row.our_model || row.model }}</strong>
+          <div style="font-weight: bold">{{ row.model || '—' }}</div>
           <div style="font-size: 11px; color: #909399; margin-top: 2px">{{ row.supplier_name || '未绑定' }}</div>
         </template>
       </el-table-column>
@@ -89,7 +89,7 @@
           {{ row.unit_weight_kg != null ? Number(row.unit_weight_kg).toFixed(3) : '—' }}
         </template>
       </el-table-column>
-      <el-table-column prop="purchase_cost_rmb" label="采购价(¥)" width="100" align="right" />
+      <el-table-column v-if="!userStore.hidePurchaseAndProfit" prop="purchase_cost_rmb" label="采购价(¥)" width="100" align="right" />
       <el-table-column prop="export_price_usd" label="外销价(¥)" width="100" align="right" />
       <el-table-column label="交货期" prop="delivery_period" width="100" show-overflow-tooltip />
       <el-table-column label="备注" prop="remark" min-width="140" show-overflow-tooltip>
@@ -133,7 +133,7 @@
               <el-input v-model="form.model" />
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :span="8" v-if="!userStore.hideSupplierInfo">
             <el-form-item label="供应商型号">
               <el-input v-model="form.our_model" placeholder="供应商型号" />
             </el-form-item>
@@ -158,7 +158,7 @@
               </el-select>
             </el-form-item>
           </el-col>
-          <el-col :span="8">
+          <el-col :span="8" v-if="!userStore.hideSupplierInfo">
             <el-form-item label="供应商">
               <el-select v-model="form.supplier_id" clearable style="width: 100%">
                 <el-option
@@ -297,7 +297,7 @@
 
         <el-divider content-position="left">价格与图片</el-divider>
         <el-row :gutter="16">
-          <el-col :span="8">
+          <el-col :span="8" v-if="!userStore.hidePurchaseAndProfit">
             <el-form-item label="采购价(¥)" prop="purchase_cost_rmb">
               <el-input-number v-model="form.purchase_cost_rmb" :min="0" :controls="false" style="width: 100%" />
             </el-form-item>
@@ -365,8 +365,7 @@ const form = ref({})
 const rules = {
   model: [{ required: true, message: '请输入型号', trigger: 'blur' }],
   hs_code: [{ required: true, message: '请输入HS编码', trigger: 'blur' }],
-  name_en: [{ required: true, message: '请输入英文品名', trigger: 'blur' }],
-  purchase_cost_rmb: [{ required: true, message: '请输入采购价', trigger: 'blur' }]
+  name_en: [{ required: true, message: '请输入英文品名', trigger: 'blur' }]
 }
 
 const NUMERIC_FIELDS = [

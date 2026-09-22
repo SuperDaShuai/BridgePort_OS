@@ -6,6 +6,15 @@ const router = express.Router();
 
 const ALLOWED = ['hs_code', 'product_name', 'declaration_elements'];
 
+// HS 编码库对业务员（等级≥3）只读：写操作统一拦截
+function denyReadOnly(req, res) {
+  if (Number(req.operator?.permission_level) >= 3) {
+    res.fail('HS编码库为共享基础数据，仅管理员与主管可维护', 403);
+    return true;
+  }
+  return false;
+}
+
 // 列表：支持按 HS编码 / 产品名称 搜索
 router.get(
   '/',
@@ -43,6 +52,7 @@ router.get(
 router.post(
   '/',
   asyncHandler(async (req, res) => {
+    if (denyReadOnly(req, res)) return;
     const data = pickFields(req.body, ALLOWED);
     if (!data.hs_code) return res.fail('HS编码为必填', 400);
     if (!data.product_name) return res.fail('HS产品名称为必填', 400);
@@ -56,6 +66,7 @@ router.post(
 router.put(
   '/:id',
   asyncHandler(async (req, res) => {
+    if (denyReadOnly(req, res)) return;
     const data = pickFields(req.body, ALLOWED);
     if (Object.keys(data).length === 0) return res.fail('无可更新字段', 400);
 
@@ -69,6 +80,7 @@ router.put(
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
+    if (denyReadOnly(req, res)) return;
     const [r] = await pool.query('DELETE FROM hs_codes WHERE id = ?', [req.params.id]);
     if (r.affectedRows === 0) return res.fail('HS编码记录不存在', 404);
     res.success({ id: Number(req.params.id) }, '删除成功');

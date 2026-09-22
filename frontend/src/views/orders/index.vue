@@ -53,6 +53,9 @@
           <div class="progress-text">{{ row.progress_percent || 0 }}%</div>
         </template>
       </el-table-column>
+      <el-table-column label="负责人" width="90" align="center">
+        <template #default="{ row }">{{ row.owner_name || '—' }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="240" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="success" @click="openPi(row)">📄 生成 PI</el-button>
@@ -109,10 +112,15 @@
           </el-form-item>
           <el-form-item label="贸易条款">
             <el-select v-model="form.trade_terms" style="width: 100%">
-              <el-option value="FOB" label="FOB" />
-              <el-option value="CIF" label="CIF" />
-              <el-option value="CFR" label="CFR" />
               <el-option value="EXW" label="EXW" />
+              <el-option value="EXW NO VAT" label="EXW NO VAT" />
+              <el-option value="FCA" label="FCA" />
+              <el-option value="FCA NO VAT" label="FCA NO VAT" />
+              <el-option value="FAS" label="FAS" />
+              <el-option value="FOB" label="FOB" />
+              <el-option value="CFR" label="CFR" />
+              <el-option value="CIF" label="CIF" />
+              <el-option value="DPU" label="DPU" />
               <el-option value="DDP" label="DDP" />
             </el-select>
           </el-form-item>
@@ -128,6 +136,9 @@
             <div v-if="form.customs_responsibility === '请选择'" class="field-hint">
               转PI订单待确认：请选择报关责任后保存，系统将自动生成购销合同等单据
             </div>
+          </el-form-item>
+          <el-form-item label="负责人">
+            <el-input v-model="form.owner_name" disabled placeholder="创建后自动记录" />
           </el-form-item>
         </div>
         <div class="form-grid-4">
@@ -291,9 +302,11 @@ import { listSuppliers } from '@/api/suppliers'
 import { listBankAccounts } from '@/api/bankAccounts'
 import { listPaymentTerms } from '@/api/paymentTerms'
 import { getCompanySettings } from '@/api/companySettings'
+import { useUserStore } from '@/stores/user'
 
 const STATUSES = ['PI确认', '生产中', '已发货', '已到港', '已签收', '已完成']
 const statusTag = { PI确认: 'info', 生产中: 'warning', 已发货: 'primary', 已到港: 'primary', 已签收: 'success', 已完成: 'success' }
+const userStore = useUserStore()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -335,7 +348,7 @@ const blankForm = () => ({
   packing_desc: 'Standard Neutral Export Cartons',
   special_req: 'Standard requirements.',
   show_special_req: true, show_stamp: true, show_hs_code: false,
-  total_amount: undefined, quotation_id: null, items: []
+  total_amount: undefined, quotation_id: null, items: [], owner_name: ''
 })
 const blankItem = () => ({
   product_id: null, model: '', name_en: '', hs_code: '', unit: '',
@@ -441,26 +454,16 @@ function onProductPick(row, productId) {
     row.price = row.price_rmb
   }
   row.ctns = 1
-  // Specification（产品英文名已在标题列以粗体单独展示，不再写入 spec 避免重复）
-  const specLines = []
-  if (p.spec) specLines.push(p.spec)
-  if (p.hs_code) specLines.push('HS: ' + p.hs_code)
-  row.spec = specLines.join('\n')
+  // Specification（产品英文名已在标题列以粗体单独展示，不再写入 spec 避免重复；HS 编码独立存 row.hs_code，PI 按开关显示）
+  row.spec = p.spec || ''
   calcRow(row)
 }
 function calcRow(row) {
   const pcs = Number(row.pcs_per_ctn) || 0
   const ctns = Number(row.ctns) || 0
-  // 手动改了单价 → 同步回基准 RMB 价
+  // 注意：手动改单价不回写 price_rmb 基准，避免 toFixed 累积漂移
+  // 基准 price_rmb 仅在「选产品」(onProductChange) 和「切换币种」(togglePriceCurrency) 时设置
   const p = Number(row.price) || 0
-  if (p > 0) {
-    if (priceCurrency.value === 'RMB') {
-      row.price_rmb = p
-    } else {
-      const usdRate = Number(companySettings.value.default_usd_rate) || 7.2
-      row.price_rmb = Number((p * usdRate).toFixed(2))
-    }
-  }
   row.qty = pcs * ctns
   row.subtotal_amount = Number((row.qty * p).toFixed(2))
 }
@@ -484,6 +487,8 @@ function onSearch() { query.page = 1; loadList() }
 
 async function openCreate() {
   form.value = blankForm()
+  // 负责人 = 当前登录人（新增时展示，编辑时展示已保存的负责人）
+  form.value.owner_name = userStore.displayName
   priceCurrency.value = 'RMB'
   try { form.value.pi_number = await getNextOrderNumber() } catch {}
   form.value.signing_date = new Date().toISOString().slice(0, 10)
@@ -503,11 +508,32 @@ async function openEdit(row) {
   detail.show_hs_code = !!detail.show_hs_code
   // 收款方式：有支付宝收款码即视为支付宝模式（与银行账户互斥）
   detail.pay_method = detail.alipay_qrcode ? 'alipay' : 'bank'
-  detail.items = (detail.items || []).map(it => ({
-    ...it,
-    price_rmb: it.price_rmb ?? it.price ?? undefined, // 已存订单以 price 为 RMB 基准
-    subtotal_amount: Number(it.subtotal_amount) || 0
-  }))
+  detail.items = (detail.items || []).map(it => {
+    // 回显价格基准：优先用已存的 price_rmb；历史订单无 price_rmb 时按订单币种补偿一次
+    let baseRmb = Number(it.price_rmb)
+    if (!baseRmb || isNaN(baseRmb)) {
+      const savedPrice = Number(it.price) || 0
+      if (savedPrice > 0) {
+        // 历史订单：USD 保存的 price 是美元值 → 乘汇率推基准；RMB 订单 price 即基准
+        baseRmb = detail.currency === 'USD'
+          ? Number((savedPrice * (Number(companySettings.value.default_usd_rate) || 7.2)).toFixed(2))
+          : savedPrice
+      }
+    }
+    // price 按当前开关币种从基准派生，避免反复换算漂移
+    let displayPrice = Number(it.price)
+    if (baseRmb > 0) {
+      displayPrice = priceCurrency.value === 'USD'
+        ? Number((baseRmb / (Number(companySettings.value.default_usd_rate) || 7.2)).toFixed(2))
+        : baseRmb
+    }
+    return {
+      ...it,
+      price_rmb: baseRmb || undefined,
+      price: displayPrice,
+      subtotal_amount: Number(((Number(it.qty) || 0) * displayPrice).toFixed(2))
+    }
+  })
   form.value = detail
   dialogVisible.value = true
 }

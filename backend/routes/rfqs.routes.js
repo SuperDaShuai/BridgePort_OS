@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
-const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers');
+const { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership } = require('../utils/helpers');
+const { logOperation, ownerOf } = require('../utils/operation-log');
 
 const router = express.Router();
 
@@ -27,6 +28,11 @@ router.get(
       conditions.push('r.follow_up_stage = ?');
       params.push(stage);
     }
+    // 业务员只能看到自己创建的询盘
+    if (isScopedOperator(req)) {
+      conditions.push('r.owner_id = ?');
+      params.push(req.operator.id);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const [[{ total }]] = await pool.query(
@@ -50,6 +56,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const [[rfq]] = await pool.query('SELECT * FROM rfqs WHERE id = ?', [req.params.id]);
     if (!rfq) return res.fail('询盘不存在', 404);
+    const denied = checkOwnership(rfq, req, '询盘');
+    if (denied) return res.fail(denied, 404);
     res.success(rfq);
   })
 );
@@ -61,7 +69,15 @@ router.post(
     const missing = REQUIRED.filter((k) => !data[k]);
     if (missing.length) return res.fail(`缺少必填字段: ${missing.join(', ')}`, 400);
 
+    // 负责人自动写入当前登录人
+    data.owner_name = ownerOf(req.operator);
+    data.owner_id = req.operator.id;
+
     const [r] = await pool.query('INSERT INTO rfqs SET ?', data);
+    await logOperation(null, {
+      module: 'rfq', action: '新增',
+      targetId: r.insertId, targetNo: data.rfq_number, operator: req.operator
+    });
     res.success({ id: r.insertId }, '创建成功');
   })
 );
@@ -72,8 +88,19 @@ router.put(
     const data = pickFields(req.body, ALLOWED);
     if (Object.keys(data).length === 0) return res.fail('无可更新字段', 400);
 
+    const [[before]] = await pool.query('SELECT * FROM rfqs WHERE id = ?', [req.params.id]);
+    if (!before) return res.fail('询盘不存在', 404);
+    const denied = checkOwnership(before, req, '询盘');
+    if (denied) return res.fail(denied, 404);
+
     const [r] = await pool.query('UPDATE rfqs SET ? WHERE id = ?', [data, req.params.id]);
     if (r.affectedRows === 0) return res.fail('询盘不存在', 404);
+
+    // 取业务编号记录操作日志
+    await logOperation(null, {
+      module: 'rfq', action: '修改',
+      targetId: Number(req.params.id), targetNo: before.rfq_number, operator: req.operator
+    });
     res.success({ id: Number(req.params.id) }, '更新成功');
   })
 );
@@ -81,6 +108,11 @@ router.put(
 router.delete(
   '/:id',
   asyncHandler(async (req, res) => {
+    const [[before]] = await pool.query('SELECT * FROM rfqs WHERE id = ?', [req.params.id]);
+    if (!before) return res.fail('询盘不存在', 404);
+    const denied = checkOwnership(before, req, '询盘');
+    if (denied) return res.fail(denied, 404);
+
     const [r] = await pool.query('DELETE FROM rfqs WHERE id = ?', [req.params.id]);
     if (r.affectedRows === 0) return res.fail('询盘不存在', 404);
     res.success({ id: Number(req.params.id) }, '删除成功');

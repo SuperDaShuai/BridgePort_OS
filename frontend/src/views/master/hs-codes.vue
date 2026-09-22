@@ -86,7 +86,8 @@ import { listHsCodes, getHsCode, createHsCode, updateHsCode, deleteHsCode } from
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
-const canEdit = userStore.canEdit
+// HS编码库为共享基础数据：仅管理员与主管可维护（等级≤2），业务员只可查看
+const canEdit = userStore.permissionLevel <= 2
 
 const loading = ref(false)
 const saving = ref(false)
