@@ -741,6 +741,178 @@ const migrations = [
         await runSQL(conn, "ALTER TABLE order_items ADD COLUMN price_rmb DECIMAL(12,2) NULL DEFAULT NULL COMMENT '人民币基准单价(外销价)'");
       }
     }
+  },
+
+  // ===== 027 · 样品单关联订单化字段（签约/交货/币种/收款/付款/包装/特殊要求/显示开关） =====
+  {
+    id: '027',
+    desc: 'samples_tracking 新增 signing_date/delivery_date/trade_terms/currency/bank_account_id/alipay_qrcode/payment_terms/packing_desc/special_req/show_special_req/show_stamp/show_hs_code',
+    async check(conn) {
+      if (!(await tableExists(conn, 'samples_tracking'))) return false;
+      const cols = ['signing_date', 'delivery_date', 'trade_terms', 'currency', 'bank_account_id', 'alipay_qrcode',
+                    'payment_terms', 'packing_desc', 'special_req', 'show_special_req', 'show_stamp', 'show_hs_code'];
+      for (const c of cols) {
+        if (!(await columnExists(conn, 'samples_tracking', c))) return false;
+      }
+      return true;
+    },
+    async up(conn) {
+      const colDefs = [
+        ['signing_date', "ALTER TABLE samples_tracking ADD COLUMN signing_date DATE NULL DEFAULT NULL COMMENT '签约日期'"],
+        ['delivery_date', "ALTER TABLE samples_tracking ADD COLUMN delivery_date DATE NULL DEFAULT NULL COMMENT '交货日期'"],
+        ['trade_terms', "ALTER TABLE samples_tracking ADD COLUMN trade_terms VARCHAR(50) NULL DEFAULT NULL COMMENT '贸易条款'"],
+        ['currency', "ALTER TABLE samples_tracking ADD COLUMN currency VARCHAR(10) NULL DEFAULT 'RMB' COMMENT '结算币种(RMB/USD)'"],
+        ['bank_account_id', "ALTER TABLE samples_tracking ADD COLUMN bank_account_id INT NULL DEFAULT NULL COMMENT '收款银行账户ID'"],
+        ['alipay_qrcode', "ALTER TABLE samples_tracking ADD COLUMN alipay_qrcode MEDIUMTEXT NULL DEFAULT NULL COMMENT '支付宝收款码(base64)'"],
+        ['payment_terms', "ALTER TABLE samples_tracking ADD COLUMN payment_terms VARCHAR(200) NULL DEFAULT NULL COMMENT '付款方式'"],
+        ['packing_desc', "ALTER TABLE samples_tracking ADD COLUMN packing_desc VARCHAR(500) NULL DEFAULT NULL COMMENT '包装说明'"],
+        ['special_req', "ALTER TABLE samples_tracking ADD COLUMN special_req TEXT NULL COMMENT '特殊要求'"],
+        ['show_special_req', "ALTER TABLE samples_tracking ADD COLUMN show_special_req TINYINT(1) NOT NULL DEFAULT 1 COMMENT '显示特殊要求'"],
+        ['show_stamp', "ALTER TABLE samples_tracking ADD COLUMN show_stamp TINYINT(1) NOT NULL DEFAULT 1 COMMENT '显示电子签章'"],
+        ['show_hs_code', "ALTER TABLE samples_tracking ADD COLUMN show_hs_code TINYINT(1) NOT NULL DEFAULT 0 COMMENT '显示HS编码'"]
+      ];
+      for (const [name, sql] of colDefs) {
+        if (!(await columnExists(conn, 'samples_tracking', name))) await runSQL(conn, sql);
+      }
+    }
+  },
+
+  // ===== 028 · 样品明细行对齐订单明细（价格与包装计算字段） =====
+  {
+    id: '028',
+    desc: 'sample_items 新增 price/price_rmb/cost_cny/subtotal_amount/nw_per_ctn/gw_per_ctn/cbm_per_ctn',
+    async check(conn) {
+      if (!(await tableExists(conn, 'sample_items'))) return false;
+      const cols = ['price', 'price_rmb', 'cost_cny', 'subtotal_amount', 'nw_per_ctn', 'gw_per_ctn', 'cbm_per_ctn'];
+      for (const c of cols) {
+        if (!(await columnExists(conn, 'sample_items', c))) return false;
+      }
+      return true;
+    },
+    async up(conn) {
+      const colDefs = [
+        ['price', "ALTER TABLE sample_items ADD COLUMN price DECIMAL(12,2) NULL DEFAULT NULL COMMENT '外销单价(当前币种)'"],
+        ['price_rmb', "ALTER TABLE sample_items ADD COLUMN price_rmb DECIMAL(12,2) NULL DEFAULT NULL COMMENT '人民币基准单价'"],
+        ['cost_cny', "ALTER TABLE sample_items ADD COLUMN cost_cny DECIMAL(12,2) NULL DEFAULT NULL COMMENT '人民币采购成本'"],
+        ['subtotal_amount', "ALTER TABLE sample_items ADD COLUMN subtotal_amount DECIMAL(12,2) NULL DEFAULT NULL COMMENT '小计金额'"],
+        ['nw_per_ctn', "ALTER TABLE sample_items ADD COLUMN nw_per_ctn DECIMAL(10,2) NULL DEFAULT NULL COMMENT '单箱净重(kg)'"],
+        ['gw_per_ctn', "ALTER TABLE sample_items ADD COLUMN gw_per_ctn DECIMAL(10,2) NULL DEFAULT NULL COMMENT '单箱毛重(kg)'"],
+        ['cbm_per_ctn', "ALTER TABLE sample_items ADD COLUMN cbm_per_ctn DECIMAL(10,4) NULL DEFAULT NULL COMMENT '单箱体积(m³)'"]
+      ];
+      for (const [name, sql] of colDefs) {
+        if (!(await columnExists(conn, 'sample_items', name))) await runSQL(conn, sql);
+      }
+    }
+  },
+
+  // ===== 029 · 产品数据库价格扩精度：DECIMAL(10,2) → DECIMAL(12,6) =====
+  {
+    id: '029',
+    desc: 'products.purchase_cost_rmb / export_price_usd 扩为 DECIMAL(12,6) 支持多位小数',
+    async check(conn) {
+      // 检查 purchase_cost_rmb 是否已达到 DECIMAL(12,6)
+      const [rows] = await conn.query(
+        `SELECT column_name, numeric_precision, numeric_scale
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE() AND table_name = 'products'
+           AND column_name IN ('purchase_cost_rmb', 'export_price_usd')`
+      );
+      if (rows.length < 2) return false;
+      // 两个列都要 scale >= 6 才算已迁移
+      return rows.every(r => Number(r.numeric_scale) >= 6);
+    },
+    async up(conn) {
+      await runSQL(conn,
+        `ALTER TABLE products
+         MODIFY COLUMN purchase_cost_rmb DECIMAL(12,6) NOT NULL COMMENT '采购价(人民币)',
+         MODIFY COLUMN export_price_usd   DECIMAL(12,6) NULL     DEFAULT 0 COMMENT '外销价(人民币)'`);
+    }
+  },
+
+  // ===== 030 · 产品价格精度精细化：采购价 4 位 / 外销价 2 位 =====
+  {
+    id: '030',
+    desc: 'products.purchase_cost_rmb 扩为 DECIMAL(12,4)；export_price_usd 回落为 DECIMAL(12,2)',
+    async check(conn) {
+      const [rows] = await conn.query(
+        `SELECT column_name, numeric_scale
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE() AND table_name = 'products'
+           AND column_name IN ('purchase_cost_rmb', 'export_price_usd')`
+      );
+      if (rows.length < 2) return false;
+      const map = {};
+      rows.forEach(r => { map[r.column_name] = Number(r.numeric_scale); });
+      // 采购价 scale=4 且 外销价 scale=2 才算已迁移
+      return map.purchase_cost_rmb === 4 && map.export_price_usd === 2;
+    },
+    async up(conn) {
+      await runSQL(conn,
+        `ALTER TABLE products
+         MODIFY COLUMN purchase_cost_rmb DECIMAL(12,4) NOT NULL COMMENT '采购价(人民币)',
+         MODIFY COLUMN export_price_usd   DECIMAL(12,2) NULL     DEFAULT 0.00 COMMENT '外销价(人民币)'`);
+    }
+  },
+
+  // ===== 031 · 产品多图表 product_photos =====
+  {
+    id: '031',
+    desc: '新建 product_photos 表，支持每个产品上传多张额外图片',
+    async check(conn) {
+      return await tableExists(conn, 'product_photos');
+    },
+    async up(conn) {
+      await runSQL(conn, `
+        CREATE TABLE IF NOT EXISTS product_photos (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          product_id INT NOT NULL COMMENT '关联产品ID',
+          photo_url MEDIUMTEXT NOT NULL COMMENT '图片(base64)',
+          caption VARCHAR(100) NULL DEFAULT NULL COMMENT '图片说明(选填)',
+          sort_order INT NOT NULL DEFAULT 0 COMMENT '排序（同产品内）',
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          INDEX idx_product (product_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='产品多图'
+      `);
+    }
+  },
+
+  // ===== 032 · samples_tracking 新增 remarks 备注字段 =====
+  {
+    id: '032',
+    desc: 'samples_tracking 表新增 remarks TEXT 字段（多行内部备注，不进 PI）',
+    async check(conn) {
+      return await columnExists(conn, 'samples_tracking', 'remarks');
+    },
+    async up(conn) {
+      await runSQL(conn, `ALTER TABLE samples_tracking ADD COLUMN remarks TEXT NULL COMMENT '内部备注（多行）' AFTER special_req`);
+    }
+  },
+  // ===== 033 · samples_tracking 新增购销合同/生产任务单字段 =====
+  {
+    id: '033',
+    desc: 'samples_tracking 表新增 purchase_contract / production_order 字段（MEDIUMTEXT，JSON 存储，支持样品单生成购销合同与生产任务单）',
+    async check(conn) {
+      const ok1 = await columnExists(conn, 'samples_tracking', 'purchase_contract');
+      const ok2 = await columnExists(conn, 'samples_tracking', 'production_order');
+      return ok1 && ok2;
+    },
+    async up(conn) {
+      await runSQL(conn, `ALTER TABLE samples_tracking
+        ADD COLUMN purchase_contract MEDIUMTEXT NULL COMMENT '购销合同数据(JSON)' AFTER remarks,
+        ADD COLUMN production_order  MEDIUMTEXT NULL COMMENT '生产任务单数据(JSON)' AFTER purchase_contract`);
+    }
+  },
+  // ===== 034 · samples_tracking 新增 supplier_id（供应商下拉关联）=====
+  {
+    id: '034',
+    desc: 'samples_tracking 新增 supplier_id 供应商字段（生产任务单供应商下拉关联）',
+    async check(conn) {
+      return await columnExists(conn, 'samples_tracking', 'supplier_id');
+    },
+    async up(conn) {
+      await runSQL(conn, `ALTER TABLE samples_tracking
+        ADD COLUMN supplier_id INT NULL DEFAULT NULL COMMENT '供应商ID' AFTER client_id`);
+    }
   }
 ];
 

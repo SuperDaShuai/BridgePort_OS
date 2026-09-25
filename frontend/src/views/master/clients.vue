@@ -45,7 +45,7 @@
 
     <!-- 新增/编辑弹窗 -->
     <el-dialog
-      v-model="dialogVisible"
+      v-model="dialogVisible" :close-on-click-modal="false"
       :title="readonly ? '查看客户' : (form.id ? '编辑客户' : '新增客户')"
       width="760px"
       destroy-on-close

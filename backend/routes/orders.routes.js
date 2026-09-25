@@ -145,11 +145,18 @@ router.get(
   })
 );
 
-// 详情：主表 + 明细行
+// 详情：主表 + 明细行 + 客户/供应商名称（供采购订货单等单据关联使用）
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const [[order]] = await pool.query('SELECT * FROM orders WHERE id = ?', [req.params.id]);
+    const [[order]] = await pool.query(
+      `SELECT o.*, c.name_en AS client_name, s.name AS supplier_name
+       FROM orders o
+       LEFT JOIN clients c ON o.client_id = c.id
+       LEFT JOIN suppliers s ON o.supplier_id = s.id
+       WHERE o.id = ?`,
+      [req.params.id]
+    );
     if (!order) return res.fail('订单不存在', 404);
     const denied = checkOwnership(order, req, '订单');
     if (denied) return res.fail(denied, 404);
@@ -162,6 +169,119 @@ router.get(
       [order.id]
     );
     res.success({ ...order, items });
+  })
+);
+
+// 采购订货单 .xlsx 下载：基于上传的 Excel 模板填值，100% 保留模板样式
+const ExcelJS = require('exceljs');
+const path = require('path');
+const TEMPLATE_PATH = path.join(__dirname, '..', 'templates', '采购订货单_模板.xlsx');
+
+function parsePo(val) {
+  if (!val) return {};
+  if (typeof val === 'string') {
+    try { return JSON.parse(val) || {} } catch { return {} }
+  }
+  return val;
+}
+
+router.get(
+  '/:id/purchase-order-xlsx',
+  asyncHandler(async (req, res) => {
+    const [[order]] = await pool.query(
+      `SELECT o.*, c.name_en AS client_name, s.name AS supplier_name
+       FROM orders o
+       LEFT JOIN clients c ON o.client_id = c.id
+       LEFT JOIN suppliers s ON o.supplier_id = s.id
+       WHERE o.id = ?`,
+      [req.params.id]
+    );
+    if (!order) return res.fail('订单不存在', 404);
+    const denied = checkOwnership(order, req, '订单');
+    if (denied) return res.fail(denied, 404);
+
+    const [items] = await pool.query(
+      `SELECT oi.*, p.spec_cn, p.our_model AS supplier_model FROM order_items oi
+       LEFT JOIN products p ON oi.product_id = p.id
+       WHERE oi.order_id = ? ORDER BY oi.id ASC`,
+      [order.id]
+    );
+
+    const po = parsePo(order.production_order);
+    const exts = po.item_extensions || [];
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(TEMPLATE_PATH);
+    const ws = wb.getWorksheet('采购订货单');
+    if (!ws) return res.fail('模板文件缺失或工作表名错误', 500);
+
+    // ===== 抬头区 =====
+    ws.getCell('C3').value = order.client_name || '';
+    ws.getCell('I3').value = po.po_number || (order.pi_number ? order.pi_number + '-POD' : '');
+    ws.getCell('C4').value = new Date().toISOString().slice(0, 10);
+    ws.getCell('E4').value = (order.delivery_date || '').slice(0, 10);
+    ws.getCell('I4').value = (req.operator && (req.operator.display_name || req.operator.username)) || '';
+
+    // ===== 一、产品明细清单（模板预留 5 行：8-12）=====
+    for (let i = 0; i < 5; i++) {
+      const row = 8 + i;
+      const it = items[i];
+      const ext = exts[i] || {};
+      ws.getCell(`A${row}`).value = i + 1;
+      ws.getCell(`B${row}`).value = (it && (it.supplier_model || it.model)) || '';
+      ws.getCell(`C${row}`).value = it ? (Number(it.qty) || 0) : '';
+      ws.getCell(`D${row}`).value = ext.shell_color || '';
+      ws.getCell(`E${row}`).value = ext.screen_spec || '';
+      ws.getCell(`F${row}`).value = ext.sensor || '';
+      ws.getCell(`G${row}`).value = ext.bracket || '';
+      ws.getCell(`H${row}`).value = ext.pan_spec || '';
+      ws.getCell(`I${row}`).value = ext.remark || '';
+    }
+
+    // ===== 二、核心电气、传感器与部件配置 =====
+    // 标签行：A18 主板型号 / F18 充电模式 / A19 工作电压 / F19 PTC保护 / A20 电池规格 / F20 铭牌/铅封/说明书 / A21 面贴要求 / F21 客户商标(LOGO) / A22 包装说明
+    ws.getCell('C18').value = po.board_model || '';
+    ws.getCell('H18').value = po.charge_mode || '';
+    ws.getCell('C19').value = po.work_voltage || '';
+    ws.getCell('H19').value = po.ptc_protection || '';
+    ws.getCell('C20').value = po.battery_spec || '';
+    ws.getCell('H20').value = po.nameplate_seal_req || '';
+    ws.getCell('C21').value = po.face_sticker_req || '';
+    ws.getCell('H21').value = po.client_logo_req || '';
+    ws.getCell('C22').value = po.packing_desc || '';
+    // 值单元格统一靠左（模板中 C19/C20/C21 为居中，统一改为左对齐）
+    for (const addr of ['C18', 'H18', 'C19', 'H19', 'C20', 'H20', 'C21', 'H21', 'C22']) {
+      ws.getCell(addr).alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+    }
+
+    // ===== 三、电源线规格 =====
+    ws.getCell('C24').value = po.power_cord_spec || '';
+
+    // ===== 四、质量要求与补充说明（C31-C36，从 production_order.quality_notes 读取，未保存则用默认） =====
+    const DEFAULT_QUALITY_NOTES = [
+      '面贴、外壳铭牌及彩盒/外箱所印客户LOGO必须严格按照确认矢量图档执行，确保字迹清晰、色号准确、无重影毛刺；',
+      '工作电压、充电模式、电池规格、PTC保护等核心电气参数必须严格按本订单货单第二区块配置执行，出厂前每台需进行 100% 满负荷老化与连续通电测试 ≥ 24 小时；',
+      '整机结构密封严格，主板做加厚防潮三防漆喷涂，按键手感灵敏，传感器经四角偏差及线性度校准；',
+      '必须使用带PTC保护板电池，出厂前每台需进行 100% 满负荷老化与连续通电测试 ≥ 24 小时；',
+      '每台包含主秤 1 台、不锈钢秤盘 1 块、标配电源线 1 条、中文说明书 1 份、合格证/保修卡 1 份、高透防尘罩 1 个；',
+      '外箱清晰印制客户LOGO、产品型号、额定电压、净重/毛重、箱规尺寸及生产批次号，严禁混装。'
+    ];
+    const qualityNotes = Array.isArray(po.quality_notes) && po.quality_notes.length
+      ? po.quality_notes
+      : DEFAULT_QUALITY_NOTES.map((c, i) => ({ title: '', content: c }));
+    for (let i = 0; i < 6; i++) {
+      const cellRef = `C${31 + i}`;
+      const item = qualityNotes[i] || { content: '' };
+      // 优先用用户保存的 content，回退到默认值
+      ws.getCell(cellRef).value = item.content || DEFAULT_QUALITY_NOTES[i] || '';
+    }
+
+    // ===== 输出 .xlsx =====
+    const filename = `PurchaseOrder_${order.pi_number || 'export'}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    await wb.xlsx.write(res);
+    res.end();
   })
 );
 
@@ -230,26 +350,28 @@ router.post(
       }, 0);
     }
 
-    // 自动生成单据默认数据（购销合同/生产任务单/订舱委托书/报关要素/清关资料）
+    // 自动生成单据默认数据（报关责任未选=请选择时不生成，保存时再按实际值生成）
     const rawItems = (req.body.items || []).filter(it => it && it.model);
-    const customsResp = data.customs_responsibility || '我司代办报关';
-    // 收集单据默认值所需上下文（企业抬头/客户/供应商）
-    const [coRows] = await pool.query('SELECT name_cn, name_en, tel FROM company_settings LIMIT 1');
-    const co = coRows[0] || {};
-    const [clRows] = data.client_id ? await pool.query('SELECT name_en FROM clients WHERE id = ?', [data.client_id]) : [[]];
-    const cl = clRows[0] || {};
-    const [suRows] = data.supplier_id ? await pool.query('SELECT name FROM suppliers WHERE id = ?', [data.supplier_id]) : [[]];
-    const su = suRows[0] || {};
-    const docs = generateDefaultDocuments(data.pi_number, data.signing_date, customsResp, rawItems, {
-      client_id: data.client_id,
-      company_name_cn: co.name_cn, company_name_en: co.name_en, company_tel: co.tel,
-      client_name_en: cl.name_en,
-      supplier_name: su.name,
-      currency: data.currency, trade_terms: data.trade_terms,
-      loading_port: data.loading_port, destination_port: data.destination_port,
-      delivery_date: data.delivery_date, payment_terms: data.payment_terms
-    });
-    Object.assign(data, docs);
+    const customsResp = data.customs_responsibility || '';
+    if (REAL_CUSTOMS.includes(customsResp)) {
+      // 收集单据默认值所需上下文（企业抬头/客户/供应商）
+      const [coRows] = await pool.query('SELECT name_cn, name_en, tel FROM company_settings LIMIT 1');
+      const co = coRows[0] || {};
+      const [clRows] = data.client_id ? await pool.query('SELECT name_en FROM clients WHERE id = ?', [data.client_id]) : [[]];
+      const cl = clRows[0] || {};
+      const [suRows] = data.supplier_id ? await pool.query('SELECT name FROM suppliers WHERE id = ?', [data.supplier_id]) : [[]];
+      const su = suRows[0] || {};
+      const docs = generateDefaultDocuments(data.pi_number, data.signing_date, customsResp, rawItems, {
+        client_id: data.client_id,
+        company_name_cn: co.name_cn, company_name_en: co.name_en, company_tel: co.tel,
+        client_name_en: cl.name_en,
+        supplier_name: su.name,
+        currency: data.currency, trade_terms: data.trade_terms,
+        loading_port: data.loading_port, destination_port: data.destination_port,
+        delivery_date: data.delivery_date, payment_terms: data.payment_terms
+      });
+      Object.assign(data, docs);
+    }
 
     // JSON 字段序列化为字符串
     serializeJsonFields(data);
@@ -290,9 +412,15 @@ router.put(
     if (data.show_hs_code !== undefined) data.show_hs_code = toBool(data.show_hs_code);
     const hasItems = Array.isArray(req.body.items);
 
-    // 业务员不可编辑单据数据（订舱/报关/清关/购销合同/生产任务单均由主管维护）
-    if (Number(req.operator?.permission_level) === 3) {
+    // 业务员(3)不可编辑任何单据数据（5 个单据字段全部剥离）
+    // 跟单(5)只能编辑订舱/报关/清关字段，剥离购销合同/生产任务单（合同和生产任务单由主管维护）
+    const lvl = Number(req.operator?.permission_level);
+    if (lvl === 3) {
       for (const f of ['purchase_contract', 'production_order', 'booking_data', 'customs_data', 'decl_data']) {
+        delete data[f];
+      }
+    } else if (lvl === 5) {
+      for (const f of ['purchase_contract', 'production_order']) {
         delete data[f];
       }
     }
@@ -319,11 +447,22 @@ router.put(
       }
 
       let docsGenerated = false;
+      const oldResp = oldRow.customs_responsibility;
       const newResp = data.customs_responsibility !== undefined
         ? data.customs_responsibility
-        : oldRow.customs_responsibility;
+        : oldResp;
       const docsMissing = !oldRow.purchase_contract && !oldRow.production_order;
-      if (REAL_CUSTOMS.includes(newResp) && docsMissing) {
+      const respChanged = oldResp !== newResp && REAL_CUSTOMS.includes(newResp);
+
+      // 报关责任变为「客户自行报关」时，清理我司专属单据（订舱/清关/报关）
+      // 覆盖场景：请选择→客户自行报关、我司代办→客户自行报关
+      if (respChanged && newResp === '客户自行报关') {
+        data.booking_data = null;
+        data.customs_data = null;
+        data.decl_data = null;
+      }
+
+      if (REAL_CUSTOMS.includes(newResp) && (docsMissing || respChanged)) {
         // 合并更新前后的字段作为单据生成上下文
         const merged = { ...oldRow, ...data };
         const rawItems = hasItems
@@ -344,6 +483,7 @@ router.put(
           loading_port: merged.loading_port, destination_port: merged.destination_port,
           delivery_date: merged.delivery_date, payment_terms: merged.payment_terms
         });
+        // 仅覆盖当前责任应生成的单据，避免 null 覆盖
         Object.assign(data, docs);
         docsGenerated = true;
       }

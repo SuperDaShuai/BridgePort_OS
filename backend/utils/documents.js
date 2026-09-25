@@ -100,15 +100,14 @@ function generateDefaultDocuments(piNumber, signingDate, customsResp, items, ctx
     mark_req: '包装双坑中性外箱'
   };
 
-  const bookingData = {};
-
   const docs = {
     purchase_contract: purchaseContract,
-    production_order: productionOrder,
-    booking_data: bookingData
+    production_order: productionOrder
   };
 
   if (isCompany) {
+    // 订舱委托书仅在我司代办报关时生成
+    docs.booking_data = {};
     const grouped = groupItemsByHs(items);
 
     // ===== 清关外销三单共享数据（Commercial Invoice / Sales Contract / Packing List）=====

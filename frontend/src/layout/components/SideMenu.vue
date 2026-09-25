@@ -11,7 +11,7 @@
       class="side-menu"
     >
       <!-- 控制中心（业务员不可见） -->
-      <el-menu-item v-if="userStore.canSee([1, 2, 4])" index="/dashboard">
+      <el-menu-item v-if="userStore.canSee([1, 2, 4, 5])" index="/dashboard">
         <el-icon><Odometer /></el-icon>
         <span>控制中心 Dashboard</span>
       </el-menu-item>
@@ -20,8 +20,8 @@
         <span>订单工作台 (进度追踪)</span>
       </el-menu-item>
 
-      <!-- 报价与商机 -->
-      <el-sub-menu index="g-business">
+      <!-- 报价与商机（跟单不可见） -->
+      <el-sub-menu v-if="userStore.canSee([1, 2, 3])" index="g-business">
         <template #title>
           <el-icon><Suitcase /></el-icon>
           <span>报价与商机</span>
@@ -38,15 +38,15 @@
         </template>
         <el-menu-item index="/samples">样品管理 (Samples)</el-menu-item>
         <el-menu-item index="/orders">外销订单 (Proforma Invoice)</el-menu-item>
-        <el-menu-item v-if="userStore.canSee([1, 2, 4])" index="/purchase/contracts">购销合同</el-menu-item>
-        <el-menu-item v-if="userStore.canSee([1, 2, 4])" index="/purchase/production-orders">生产任务单 (PO)</el-menu-item>
-        <el-menu-item v-if="userStore.canSee([1, 2, 4])" index="/shipping">订舱委托书 (Shipping Order)</el-menu-item>
-        <el-menu-item v-if="userStore.canSee([1, 2, 4])" index="/customs/customs-declaration">出口报关单要素</el-menu-item>
+        <el-menu-item v-if="userStore.canSee([1, 2, 4, 5])" index="/purchase/contracts">购销合同</el-menu-item>
+        <el-menu-item v-if="userStore.canSee([1, 2, 5])" index="/purchase/production-orders">生产任务单 (PO)</el-menu-item>
+        <el-menu-item v-if="userStore.canSee([1, 2, 5])" index="/shipping">订舱委托书 (Shipping Order)</el-menu-item>
+        <el-menu-item v-if="userStore.canSee([1, 2, 5])" index="/customs/customs-declaration">出口报关单要素</el-menu-item>
         <el-menu-item index="/customs/clearance-docs">目的港清关资料</el-menu-item>
       </el-sub-menu>
 
-      <!-- 质量检验（业务员不可见） -->
-      <el-sub-menu v-if="userStore.canSee([1, 2, 4])" index="g-qc">
+      <!-- 质量检验（业务员/跟单不可见） -->
+      <el-sub-menu v-if="userStore.canSee([1, 2])" index="g-qc">
         <template #title>
           <el-icon><Checked /></el-icon>
           <span>质量检验</span>
@@ -54,8 +54,8 @@
         <el-menu-item index="/qc">质量检验 (QC质检)</el-menu-item>
       </el-sub-menu>
 
-      <!-- 外贸实用工具（业务员不可见） -->
-      <el-sub-menu v-if="userStore.canSee([1, 2, 4])" index="g-tools">
+      <!-- 外贸实用工具（业务员/跟单不可见） -->
+      <el-sub-menu v-if="userStore.canSee([1, 2])" index="g-tools">
         <template #title>
           <el-icon><Tools /></el-icon>
           <span>外贸实用工具</span>
@@ -63,7 +63,7 @@
         <el-menu-item index="/loadmaster">LoadMaster (装柜测算)</el-menu-item>
       </el-sub-menu>
 
-      <!-- 财务与数据分析（业务员不可见） -->
+      <!-- 财务与数据分析（业务员/跟单不可见） -->
       <el-sub-menu v-if="userStore.canSee([1, 2, 4])" index="g-finance">
         <template #title>
           <el-icon><Coin /></el-icon>
@@ -73,15 +73,15 @@
         <el-menu-item index="/analytics">BI 多维数据分析</el-menu-item>
       </el-sub-menu>
 
-      <!-- 基础母库 -->
-      <el-sub-menu index="g-master">
+      <!-- 基础母库（跟单不可见） -->
+      <el-sub-menu v-if="userStore.canSee([1, 2, 3])" index="g-master">
         <template #title>
           <el-icon><Grid /></el-icon>
           <span>基础母库</span>
         </template>
-        <el-menu-item index="/master/clients">客户管理</el-menu-item>
-        <el-menu-item index="/master/products">产品数据库</el-menu-item>
-        <el-menu-item index="/master/hs-codes">HS编码库</el-menu-item>
+        <el-menu-item v-if="userStore.canSee([1, 2, 3])" index="/master/clients">客户管理</el-menu-item>
+        <el-menu-item v-if="userStore.canSee([1, 2, 3])" index="/master/products">产品数据库</el-menu-item>
+        <el-menu-item v-if="userStore.canSee([1, 2, 3])" index="/master/hs-codes">HS编码库</el-menu-item>
         <el-menu-item v-if="userStore.canSee([1, 2, 4])" index="/master/suppliers">供应商管理</el-menu-item>
 
       </el-sub-menu>

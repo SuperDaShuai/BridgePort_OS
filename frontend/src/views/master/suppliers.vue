@@ -46,7 +46,7 @@
 
     <!-- 新增/编辑弹窗 -->
     <el-dialog
-      v-model="dialogVisible"
+      v-model="dialogVisible" :close-on-click-modal="false"
       :title="readonly ? '查看供应商' : (form.id ? '编辑供应商' : '新增供应商')"
       width="760px"
       destroy-on-close

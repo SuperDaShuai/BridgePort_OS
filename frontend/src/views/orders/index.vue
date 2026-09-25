@@ -21,7 +21,7 @@
       </el-select>
       <el-button :icon="Search" @click="onSearch">搜索</el-button>
       <div class="toolbar-right">
-        <el-button type="primary" :icon="Plus" @click="openCreate">新建外贸订单</el-button>
+        <el-button v-if="canEdit" type="primary" :icon="Plus" @click="openCreate">新建外贸订单</el-button>
       </div>
     </div>
 
@@ -59,8 +59,8 @@
       <el-table-column label="操作" width="240" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="success" @click="openPi(row)">📄 生成 PI</el-button>
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+          <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canEdit" link type="danger" @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -78,7 +78,7 @@
 
     <!-- 新增/编辑订单弹窗 -->
     <el-dialog
-      v-model="dialogVisible"
+      v-model="dialogVisible" :close-on-click-modal="false"
       :title="form.id ? '编辑外贸订单 (PI)' : '新建外贸订单 (PI)'"
       width="1200px"
       destroy-on-close
@@ -209,7 +209,7 @@
           </el-table-column>
           <el-table-column label="图片" width="70" align="center">
             <template #default="{ row }">
-              <el-image v-if="row.img_url" :src="row.img_url" fit="contain" style="width: 48px; height: 48px; border-radius: 4px; border: 1px solid #e4e7ed;" :preview-src-list="[row.img_url]" preview-teleported />
+              <el-image v-if="row.img_url" :src="row.img_url" fit="contain" style="width: 48px; height: 48px; border-radius: 4px; border: 1px solid #e4e7ed;" :preview-src-list="[row.img_url, ...(row._photos || [])]" preview-teleported />
               <div v-else class="no-photo">—</div>
             </template>
           </el-table-column>
@@ -238,12 +238,17 @@
               <span style="cursor:pointer; user-select:none" @click="togglePriceCurrency">单价({{ priceSign }}) ⇄</span>
             </template>
             <template #default="{ row }">
-              <el-input-number v-model="row.price" :min="0" :step="0.01" :controls="false" size="small" style="width: 100%" @change="calcRow(row)" />
+              <el-input-number v-model="row.price" :min="0" :step="0.01" :controls="false" size="small" style="width: 100%" @change="onPriceChange(row)" />
             </template>
           </el-table-column>
           <el-table-column :label="`总价(${priceSign})`" width="110" align="right">
             <template #default="{ row }">
               <span class="subtotal">{{ priceSign }}{{ formatMoney(row.subtotal_amount) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="CBM(箱体积)" width="110" align="center">
+            <template #default="{ row }">
+              <span class="cbm-cell">{{ rowCbm(row) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="50" align="center" fixed="right">
@@ -267,7 +272,7 @@
 
     <!-- ========== PI 预览弹窗 ========== -->
     <el-dialog
-      v-model="piVisible"
+      v-model="piVisible" :close-on-click-modal="false"
       :title="`PROFORMA INVOICE - ${piData?.pi_number || ''}`"
       width="1100px"
       destroy-on-close
@@ -307,6 +312,8 @@ import { useUserStore } from '@/stores/user'
 const STATUSES = ['PI确认', '生产中', '已发货', '已到港', '已签收', '已完成']
 const statusTag = { PI确认: 'info', 生产中: 'warning', 已发货: 'primary', 已到港: 'primary', 已签收: 'success', 已完成: 'success' }
 const userStore = useUserStore()
+// 外销订单操作权限：跟单(5)/财务(4)只读，业务员(3)可操作（受归属校验），主管及以上不限
+const canEdit = userStore.permissionLevel <= 3
 
 const loading = ref(false)
 const saving = ref(false)
@@ -457,12 +464,37 @@ function onProductPick(row, productId) {
   // Specification（产品英文名已在标题列以粗体单独展示，不再写入 spec 避免重复；HS 编码独立存 row.hs_code，PI 按开关显示）
   row.spec = p.spec || ''
   calcRow(row)
+  // 异步加载产品多图（不阻塞交互，用于图片预览扩展）
+  import('@/api/products').then(({ listProductPhotos }) => {
+    listProductPhotos(productId).then(d => {
+      row._photos = (d.list || []).map(x => x.photo_url)
+    }).catch(() => {})
+  })
 }
+// 行 CBM(箱体积) = 箱数 × 单箱体积(cbm_per_ctn)，cbm_per_ctn 在选产品时由产品数据库 ctn_cbm 自动带入
+function rowCbm(row) {
+  const ctns = Number(row.ctns) || 0
+  const cbmPerCtn = Number(row.cbm_per_ctn) || 0
+  return (ctns * cbmPerCtn).toFixed(3)
+}
+
+// 用户手动改单价：严格按当前币种同步回写 price_rmb 基准
+// RMB 模式 → price_rmb = price；USD 模式 → price_rmb = price × 汇率
+// 这样下次编辑或切换币种时，price 始终能从 price_rmb 派生出用户输入的值，避免被覆盖
+function onPriceChange(row) {
+  const p = Number(row.price) || 0
+  if (priceCurrency.value === 'RMB') {
+    row.price_rmb = p
+  } else {
+    const usdRate = Number(companySettings.value.default_usd_rate) || 7.2
+    row.price_rmb = Number((p * usdRate).toFixed(2))
+  }
+  calcRow(row)
+}
+
 function calcRow(row) {
   const pcs = Number(row.pcs_per_ctn) || 0
   const ctns = Number(row.ctns) || 0
-  // 注意：手动改单价不回写 price_rmb 基准，避免 toFixed 累积漂移
-  // 基准 price_rmb 仅在「选产品」(onProductChange) 和「切换币种」(togglePriceCurrency) 时设置
   const p = Number(row.price) || 0
   row.qty = pcs * ctns
   row.subtotal_amount = Number((row.qty * p).toFixed(2))
@@ -674,6 +706,9 @@ function buildPiHtml(order) {
   // 明细表格
   const itemsRows = (order.items || []).map((it, idx) => {
     const qty = Number(it.qty || 0), price = Number(it.price || 0)
+    const ctns = Number(it.ctns || 0)
+    const cbmPerCtn = Number(it.cbm_per_ctn || 0)
+    const rowCbmVal = ctns > 0 && cbmPerCtn > 0 ? (ctns * cbmPerCtn).toFixed(3) : ''
     // 剥离 spec 快照中的 HS 行与与产品英文名重复的行（兼容历史数据），仅展示规格描述
     const specRaw = it.spec ? String(it.spec) : ''
     const specHsMatch = specRaw.match(/HS\s*[:：]\s*([A-Za-z0-9.]+)/i)
@@ -698,6 +733,7 @@ function buildPiHtml(order) {
         <td style="text-align:center; font-weight:bold;">${qty}</td>
         <td style="text-align:center;">${currSign}${formatMoney(price)}</td>
         <td style="text-align:right; font-weight:bold;">${currSign}${formatMoney(qty * price)}</td>
+        <td style="text-align:center;">${rowCbmVal}</td>
       </tr>
     `
   }).join('')
@@ -709,6 +745,7 @@ function buildPiHtml(order) {
       <td style="text-align:center;">${totals.qty}</td>
       <td></td>
       <td style="text-align:right; color:#059669;">${currSign}${formatMoney(totals.amount)}</td>
+      <td style="text-align:center;">${totals.cbm}</td>
     </tr>
   `
 
@@ -718,12 +755,13 @@ function buildPiHtml(order) {
         <th style="width:30px; text-align:center;">NO.</th>
         <th style="width:9%; text-align:center;">Art No.</th>
         <th style="width:90px; text-align:center;">Photo</th>
-        <th style="width:30%; text-align:center;">Specification</th>
-        <th style="width:8%; text-align:center;">PCS/CTN</th>
-        <th style="width:8%; text-align:center;">CTNS</th>
-        <th style="width:10%; text-align:center;">Total Qty (pcs)</th>
-        <th style="width:10%; text-align:center;">Price</th>
-        <th style="width:12%; text-align:center;">Amount</th>
+        <th style="width:28%; text-align:center;">Specification</th>
+        <th style="width:7%; text-align:center;">PCS/CTN</th>
+        <th style="width:7%; text-align:center;">CTNS</th>
+        <th style="width:9%; text-align:center;">Total Qty (pcs)</th>
+        <th style="width:9%; text-align:center;">Price</th>
+        <th style="width:11%; text-align:right;">Amount</th>
+        <th style="width:9%; text-align:center;">CBM</th>
       </tr></thead>
       <tbody>${itemsRows}${totalsRow}</tbody>
     </table>
@@ -872,6 +910,7 @@ onMounted(() => { loadList(); loadOptions() })
 .items-table .el-table__cell { padding: 4px 6px; }
 .no-photo { width: 48px; height: 48px; line-height: 48px; text-align: center; background: #f5f7fa; border-radius: 4px; color: #c0c4cc; }
 .subtotal { font-weight: 600; color: #16a34a; }
+.cbm-cell { font-variant-numeric: tabular-nums; color: #475569; }
 .progress-text { font-size: 11px; color: #909399; margin-top: 2px; }
 .field-hint { font-size: 12px; color: #e6a23c; line-height: 1.5; margin-top: 2px; }
 .alipay-preview { display: flex; align-items: center; gap: 8px; }

@@ -21,7 +21,7 @@
       </el-select>
       <el-button :icon="Search" @click="onSearch">搜索</el-button>
       <div class="toolbar-right">
-        <el-button type="primary" :icon="Plus" @click="openCreate">新增询盘</el-button>
+        <el-button v-if="canEdit" type="primary" :icon="Plus" @click="openCreate">新增询盘</el-button>
       </div>
     </div>
 
@@ -49,8 +49,8 @@
       </el-table-column>
       <el-table-column label="操作" width="130" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+          <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canEdit" link type="danger" @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -68,7 +68,7 @@
 
     <!-- 新增/编辑弹窗 -->
     <el-dialog
-      v-model="dialogVisible"
+      v-model="dialogVisible" :close-on-click-modal="false"
       :title="form.id ? '编辑询盘' : '新增询盘'"
       width="720px"
       destroy-on-close
@@ -162,6 +162,8 @@ import { listProducts } from '@/api/products'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
+// 商机操作权限：跟单(5)/财务(4)只读，业务员(3)可操作，主管及以上不限
+const canEdit = userStore.permissionLevel <= 3
 
 const STAGES = ['跟进中', '已报价', '闭单']
 const stageTag = { 跟进中: 'warning', 已报价: 'primary', 闭单: 'success' }

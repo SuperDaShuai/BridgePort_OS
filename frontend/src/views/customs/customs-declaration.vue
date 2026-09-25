@@ -48,7 +48,7 @@
 
     <!-- ========== 单据预览弹窗 ========== -->
     <el-dialog
-      v-model="previewVisible"
+      v-model="previewVisible" :close-on-click-modal="false"
       :title="previewTitle"
       width="1100px"
       destroy-on-close
@@ -69,7 +69,7 @@
 
     <!-- ========== 编辑：出口报关草单 (Declaration Draft) ========== -->
     <el-dialog
-      v-model="declEditVisible"
+      v-model="declEditVisible" :close-on-click-modal="false"
       title="编辑出口报关单要素 (Declaration Draft)"
       width="1050px"
       destroy-on-close
@@ -178,7 +178,7 @@
 
     <!-- ========== 编辑：清关外销三单共享 (Invoice / Contract / Packing List) ========== -->
     <el-dialog
-      v-model="custEditVisible"
+      v-model="custEditVisible" :close-on-click-modal="false"
       title="编辑外销与清关单据 (Sales Contract / Invoice / Packing List)"
       width="1150px"
       destroy-on-close
@@ -263,7 +263,7 @@ import { useUserStore } from '@/stores/user'
 
 // 单据维护权限：业务员（等级3）仅可下载打印，编辑由主管及以上操作
 const userStore = useUserStore()
-const canMaintain = userStore.permissionLevel <= 2
+const canMaintain = userStore.permissionLevel <= 5
 
 const loading = ref(false)
 const saving = ref(false)

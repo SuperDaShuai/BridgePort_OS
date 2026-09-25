@@ -43,7 +43,7 @@
 
     <!-- ========== 订舱委托书预览弹窗 ========== -->
     <el-dialog
-      v-model="previewVisible"
+      v-model="previewVisible" :close-on-click-modal="false"
       :title="`BOOKING NOTE (SO) - ${previewOrder?.pi_number || ''}-SHP`"
       width="1100px"
       destroy-on-close
@@ -62,7 +62,7 @@
 
     <!-- ========== 编辑订舱委托书弹窗（仿参考项目 modal-booking-edit） ========== -->
     <el-dialog
-      v-model="editVisible"
+      v-model="editVisible" :close-on-click-modal="false"
       title="编辑订舱委托书 (Booking Note & Shipping Order)"
       width="900px"
       destroy-on-close
@@ -201,7 +201,7 @@ import { useUserStore } from '@/stores/user'
 
 // 托书维护权限：业务员（等级3）仅可下载打印，编辑由主管及以上操作
 const userStore = useUserStore()
-const canMaintain = userStore.permissionLevel <= 2
+const canMaintain = userStore.permissionLevel <= 5
 
 const loading = ref(false)
 const saving = ref(false)
@@ -253,8 +253,8 @@ async function loadList() {
   loading.value = true
   try {
     const d = await listOrders({ page: 1, pageSize: 500 })
-    // 「请选择」= 报关责任未确认（转PI默认），选择并保存后才进入单据流程
-    list.value = (d.list || []).filter((o) => o.customs_responsibility !== '请选择')
+    // 订舱委托书仅适用于「我司代办报关」的订单
+    list.value = (d.list || []).filter((o) => o.customs_responsibility === '我司代办报关')
   } catch { /* 拦截器 */ }
   finally { loading.value = false }
 }

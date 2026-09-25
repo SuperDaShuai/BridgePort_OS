@@ -54,7 +54,7 @@
 
     <!-- ========== 单据预览弹窗 ========== -->
     <el-dialog
-      v-model="previewVisible"
+      v-model="previewVisible" :close-on-click-modal="false"
       :title="previewTitle"
       width="1100px"
       destroy-on-close
@@ -75,7 +75,7 @@
 
     <!-- ========== 编辑清关资料 (customs_data) 弹窗 ========== -->
     <el-dialog
-      v-model="editVisible"
+      v-model="editVisible" :close-on-click-modal="false"
       :title="`编辑清关资料 - ${editForm.pi_number || ''}`"
       width="1200px"
       destroy-on-close
@@ -211,7 +211,7 @@ import { useUserStore } from '@/stores/user'
 
 // 清关资料维护权限：业务员（等级3）仅可下载打印，编辑由主管及以上操作
 const userStore = useUserStore()
-const canMaintain = userStore.permissionLevel <= 2
+const canMaintain = userStore.permissionLevel <= 5
 
 const loading = ref(false)
 const saving = ref(false)

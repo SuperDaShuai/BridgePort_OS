@@ -180,7 +180,7 @@
     </el-card>
 
     <!-- 收款路线新增/编辑弹窗 -->
-    <el-dialog v-model="bankDialogVisible" :title="bankForm.id ? '编辑收款路线' : '添加收款路线'" width="560px" destroy-on-close>
+    <el-dialog v-model="bankDialogVisible" :title="bankForm.id ? '编辑收款路线' : '添加收款路线'" width="560px" destroy-on-close :close-on-click-modal="false">
       <el-form ref="bankFormRef" :model="bankForm" :rules="bankRules" label-width="100px">
         <el-form-item label="路线类型" prop="route_type">
           <el-input v-model="bankForm.route_type" placeholder="如：USD 美元付款路线 / RMB 人民币付款路线" />

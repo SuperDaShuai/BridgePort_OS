@@ -12,9 +12,10 @@
           <strong>{{ contractNo(row) }}</strong>
         </template>
       </el-table-column>
-      <el-table-column label="关联外销 PI" width="160">
+      <el-table-column label="关联数据" width="160">
         <template #default="{ row }">
-          <strong style="color: #2563eb;">{{ row.pi_number }}</strong>
+          <strong style="color: #2563eb;">{{ row.ref_number }}</strong>
+          <div v-if="row.ref_type === 'sample'" class="ref-type-tag">样品单</div>
         </template>
       </el-table-column>
       <el-table-column label="供方工厂（卖方）" min-width="200" show-overflow-tooltip>
@@ -40,7 +41,7 @@
       </el-table-column>
       <el-table-column label="操作" width="100" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canMaintain" link type="primary" @click="openEdit(row)">编辑</el-button>
         </template>
       </el-table-column>
       <template #empty>暂无订单数据，请先在外销订单中创建订单</template>
@@ -48,8 +49,8 @@
 
     <!-- ========== 预览弹窗 ========== -->
     <el-dialog
-      v-model="previewVisible"
-      :title="`SALES CONTRACT - ${currentOrder?.pi_number || ''}`"
+      v-model="previewVisible" :close-on-click-modal="false"
+      :title="`SALES CONTRACT - ${currentOrder?.ref_number || currentOrder?.pi_number || ''}`"
       width="1100px"
       destroy-on-close
       top="3vh"
@@ -69,7 +70,7 @@
 
     <!-- ========== 编辑弹窗（与预览联动） ========== -->
     <el-dialog
-      v-model="editVisible"
+      v-model="editVisible" :close-on-click-modal="false"
       title="编辑国内工贸购销合同"
       width="1100px"
       destroy-on-close
@@ -197,10 +198,16 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Printer, Download, Close } from '@element-plus/icons-vue'
+import { useUserStore } from '@/stores/user'
 import { listOrders, getOrder, updateOrder } from '@/api/orders'
+import { listSamples, getSample, updateSample } from '@/api/samples'
 import { listSuppliers } from '@/api/suppliers'
 import { getCompanySettings } from '@/api/companySettings'
 import { formatMoney, numberToChineseRMB, printDocument, exportExcel } from '@/utils/docUtils'
+
+const userStore = useUserStore()
+// 合同维护权限：跟单(5)只读，仅主管及以上可编辑
+const canMaintain = userStore.permissionLevel <= 2
 
 const loading = ref(false)
 const saving = ref(false)
@@ -219,6 +226,7 @@ const editFormRef = ref()
 const editForm = ref({})
 const editItems = ref([])
 const editingOrderId = ref(null)
+const editingRefType = ref('order')
 
 /* ========== 工具：JSON 字段兼容解析（对象/字符串/null） ========== */
 function parseDoc(val) {
@@ -232,7 +240,8 @@ function parseDoc(val) {
 /* ========== 列表派生字段 ========== */
 function contractNo(row) {
   const pc = parseDoc(row.purchase_contract)
-  return pc.contract_no || (row.pi_number ? row.pi_number + '-CG' : '—')
+  const refNo = row.ref_number || row.pi_number || row.sample_number || ''
+  return pc.contract_no || (refNo ? refNo + '-CG' : '—')
 }
 function supplierName(row) {
   if (row.supplier_name) return row.supplier_name
@@ -240,13 +249,24 @@ function supplierName(row) {
   return s ? s.name : ''
 }
 
-/* ========== 数据加载（参考项目为全量列表，无分页） ========== */
+/* ========== 数据加载（合并外销订单 + 样品单） ========== */
 async function loadList() {
   loading.value = true
   try {
+    // 1. 外销订单：客户自行报关 + 我司代办报关（都生成购销合同）
     const d = await listOrders({ page: 1, pageSize: 500 })
-    // 「请选择」= 报关责任未确认（转PI默认），选择并保存后才进入单据流程
-    list.value = (d.list || []).filter((o) => o.customs_responsibility !== '请选择')
+    const orderList = (d.list || [])
+      .filter((o) => o.customs_responsibility !== '请选择')
+      .map((o) => ({ ...o, ref_type: 'order', ref_number: o.pi_number }))
+    // 2. 样品单：全部（默认按客户自行报关逻辑生成购销合同）
+    const ds = await listSamples({ page: 1, pageSize: 500 })
+    const sampleList = (ds.list || []).map((s) => ({ ...s, ref_type: 'sample', ref_number: s.sample_number }))
+    // 3. 合并：按创建时间倒序
+    list.value = [...orderList, ...sampleList].sort((a, b) => {
+      const ta = new Date(a.created_at || a.signing_date || 0).getTime()
+      const tb = new Date(b.created_at || b.signing_date || 0).getTime()
+      return tb - ta
+    })
   } catch { /* 拦截器 */ }
   finally { loading.value = false }
 }
@@ -265,11 +285,15 @@ async function loadOptions() {
 /* ========== 预览：生成购销合同 HTML（严格对照参考项目模板） ========== */
 async function openPreview(row) {
   try {
-    const detail = await getOrder(row.id)
-    currentOrder.value = detail
+    // 根据来源类型拉取完整详情
+    const detail = row.ref_type === 'sample'
+      ? await getSample(row.id)
+      : await getOrder(row.id)
+    // 样品单没有 pi_number，统一用 ref_number 用于 HTML 模板
+    currentOrder.value = { ...detail, ref_number: row.ref_number, ref_type: row.ref_type }
     const company = companySettings.value || {}
     const supplier = supplierOptions.value.find(s => s.id === detail.supplier_id) || {}
-    previewHtml.value = buildContractHtml(detail, company, supplier)
+    previewHtml.value = buildContractHtml(currentOrder.value, company, supplier)
     previewVisible.value = true
   } catch { /* 拦截器 */ }
 }
@@ -285,7 +309,7 @@ function buildContractHtml(order, company, supplier) {
     <div style="text-align:center; margin:0 0 12px; padding-bottom:10px; border-bottom:1.5px solid #0f172a; font-size:15pt; font-weight:900; letter-spacing:6px; color:#0f172a;">购 销 合 同</div>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px; font-size:11px;">
       <div><strong>需方（买方）：</strong>${company.name_cn || ''}</div>
-      <div><strong>合同编号：</strong>${pc.contract_no || (order.pi_number + '-CG')}</div>
+      <div><strong>合同编号：</strong>${pc.contract_no || ((order.ref_number || order.pi_number || '') + '-CG')}</div>
       <div><strong>供方（卖方）：</strong>${supplier.name || '供方工厂'}</div>
       <div><strong>签订日期：</strong>${(pc.sign_date || order.signing_date || '').slice(0, 10)}</div>
       <div><strong>交货地点：</strong>${pc.delivery_location || '送至买方指定出口监管仓库'}</div>
@@ -312,20 +336,24 @@ function buildContractHtml(order, company, supplier) {
 }
 
 function onPrint() {
-  printDocument(previewHtml.value, '购销合同 - ' + (currentOrder.value?.pi_number || ''))
+  printDocument(previewHtml.value, '购销合同 - ' + (currentOrder.value?.ref_number || currentOrder.value?.pi_number || ''))
 }
 function onExportExcel() {
-  exportExcel(previewHtml.value, 'Contract_' + (currentOrder.value?.pi_number || 'export') + '.xls')
+  exportExcel(previewHtml.value, 'Contract_' + (currentOrder.value?.ref_number || currentOrder.value?.pi_number || 'export') + '.xls')
 }
 
 /* ========== 编辑（与订单明细/预览联动，仿参考项目 savePurchaseContractData） ========== */
 async function openEdit(row) {
   try {
-    const detail = await getOrder(row.id)
+    const detail = row.ref_type === 'sample'
+      ? await getSample(row.id)
+      : await getOrder(row.id)
     editingOrderId.value = row.id
+    editingRefType.value = row.ref_type
+    const refNo = row.ref_number || detail.pi_number || detail.sample_number || ''
     const pc = parseDoc(detail.purchase_contract)
     editForm.value = {
-      contract_no: pc.contract_no || (detail.pi_number + '-CG'),
+      contract_no: pc.contract_no || (refNo + '-CG'),
       sign_date: (pc.sign_date || detail.signing_date || '').slice(0, 10),
       supplier_id: detail.supplier_id,
       delivery_deadline: pc.delivery_deadline || '合同签订后30天内完成生产交货',
@@ -375,7 +403,7 @@ async function onSave() {
     })
     const totalAmount = Number(items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0).toFixed(2))
 
-    await updateOrder(editingOrderId.value, {
+    await (editingRefType.value === 'sample' ? updateSample : updateOrder)(editingOrderId.value, {
       supplier_id: editForm.value.supplier_id,
       purchase_contract: {
         contract_no: editForm.value.contract_no,
@@ -405,6 +433,7 @@ onMounted(() => { loadList(); loadOptions() })
 .page-header { margin-bottom: 14px; }
 .page-title { font-size: 18px; font-weight: 700; color: #0f172a; margin: 0; }
 .sub-text { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.ref-type-tag { display: inline-block; margin-top: 2px; padding: 1px 6px; font-size: 10px; color: #fff; background: #0ea5e9; border-radius: 4px; }
 
 .doc-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
 .doc-page { background: white; padding: 35px 40px; font-size: 11px; color: #0f172a; line-height: 1.5; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }

@@ -76,7 +76,7 @@
 
     <!-- 新增/编辑弹窗 -->
     <el-dialog
-      v-model="dialogVisible"
+      v-model="dialogVisible" :close-on-click-modal="false"
       :title="form.id ? '编辑员工' : '新增员工'"
       width="640px"
       destroy-on-close
@@ -172,7 +172,8 @@ const levelMap = {
   1: { label: '超级管理员', type: 'danger' },
   2: { label: '业务主管', type: 'warning' },
   3: { label: '业务员', type: 'primary' },
-  4: { label: '财务跟单', type: 'info' }
+  4: { label: '财务', type: 'info' },
+  5: { label: '跟单', type: 'success' }
 }
 
 const loading = ref(false)

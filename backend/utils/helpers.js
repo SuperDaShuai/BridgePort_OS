@@ -18,7 +18,7 @@ function pickFields(body, allowed) {
 }
 
 // 数据归属过滤：权限等级 3（业务员）只能看到/操作自己创建的记录
-// 等级 1(超级管理员)/2(业务主管)/4(财务跟单) 不做隔离
+// 等级 1(超级管理员)/2(业务主管)/4(财务)/5(跟单) 不做隔离
 function isScopedOperator(req) {
   return Number(req.operator?.permission_level) === 3;
 }

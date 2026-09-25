@@ -21,7 +21,7 @@
       </el-select>
       <el-button :icon="Search" @click="onSearch">搜索</el-button>
       <div class="toolbar-right">
-        <el-button type="primary" :icon="Plus" @click="openCreate">新增报价单</el-button>
+        <el-button v-if="canEdit" type="primary" :icon="Plus" @click="openCreate">新增报价单</el-button>
       </div>
     </div>
 
@@ -75,14 +75,14 @@
       <el-table-column label="操作与流转" width="270" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="success" @click="onPreview(row)">📄 预览</el-button>
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button
             link
             type="warning"
             :disabled="row.status === '已转PI'"
             @click="onConvertToPi(row)"
           >⚡ 转PI</el-button>
-          <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+          <el-button v-if="canEdit" link type="danger" @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -100,7 +100,7 @@
 
     <!-- 新增/编辑报价单弹窗 -->
     <el-dialog
-      v-model="dialogVisible"
+      v-model="dialogVisible" :close-on-click-modal="false"
       :title="form.id ? '编辑报价单' : '新增报价单'"
       width="1150px"
       destroy-on-close
@@ -225,7 +225,7 @@
                 :src="row.img_url"
                 fit="contain"
                 style="width: 48px; height: 48px; border-radius: 4px; border: 1px solid #e4e7ed;"
-                :preview-src-list="[row.img_url]"
+                :preview-src-list="[row.img_url, ...(row._photos || [])]"
                 preview-teleported
               />
               <div v-else class="no-photo">—</div>
@@ -321,7 +321,7 @@
 
     <!-- ========== 报价单预览弹窗 ========== -->
     <el-dialog
-      v-model="previewVisible"
+      v-model="previewVisible" :close-on-click-modal="false"
       :title="`QUOTATION - ${previewData?.quotation_number || ''}`"
       width="1000px"
       destroy-on-close
@@ -360,6 +360,8 @@ import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
 const userStore = useUserStore()
+// 报价单操作权限：跟单(5)/财务(4)只读，业务员(3)可操作，主管及以上不限
+const canEdit = userStore.permissionLevel <= 3
 
 const STATUSES = ['草稿', '已发送', '已接受', '已失效', '已转PI']
 const CURRENCIES = { USD: 'USD ($)', RMB: 'RMB (¥)' }
@@ -508,6 +510,12 @@ function onProductPick(row, productId) {
     packingLines.push(parts.join(' / '))
   }
   row.packing_desc = packingLines.join('\n')
+  // 异步加载产品多图
+  import('@/api/products').then(({ listProductPhotos }) => {
+    listProductPhotos(productId).then(d => {
+      row._photos = (d.list || []).map(x => x.photo_url)
+    }).catch(() => {})
+  })
 }
 
 function addItemRow() {

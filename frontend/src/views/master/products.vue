@@ -97,9 +97,10 @@
           <span style="white-space: pre-wrap;">{{ row.remark || '—' }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="160" align="center" fixed="right">
+      <el-table-column label="操作" width="200" align="center" fixed="right">
         <template #default="{ row }">
           <el-button link type="info" @click="openView(row)">查看</el-button>
+          <el-button link type="warning" @click="openPhotoGallery(row)">📷 相册</el-button>
           <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button v-if="canEdit" link type="danger" @click="onDelete(row)">删除</el-button>
         </template>
@@ -180,12 +181,12 @@
               <el-input v-model="form.name_en" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="24">
             <el-form-item label="英文规格描述">
               <el-input v-model="form.spec" type="textarea" :rows="2" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="24">
             <el-form-item label="中文规格描述">
               <el-input v-model="form.spec_cn" type="textarea" :rows="2" placeholder="关联到生产任务单货物名称及规格" />
             </el-form-item>
@@ -299,12 +300,12 @@
         <el-row :gutter="16">
           <el-col :span="8" v-if="!userStore.hidePurchaseAndProfit">
             <el-form-item label="采购价(¥)" prop="purchase_cost_rmb">
-              <el-input-number v-model="form.purchase_cost_rmb" :min="0" :controls="false" style="width: 100%" />
+              <el-input-number v-model="form.purchase_cost_rmb" :min="0" :step="0.0001" :precision="4" :controls="false" style="width: 100%" />
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="外销价(¥)">
-              <el-input-number v-model="form.export_price_usd" :min="0" :controls="false" style="width: 100%" />
+              <el-input-number v-model="form.export_price_usd" :min="0" :step="0.01" :precision="2" :controls="false" style="width: 100%" />
             </el-form-item>
           </el-col>
           <el-col :span="8">
@@ -335,6 +336,56 @@
         <el-button v-if="!readonly" type="primary" :loading="saving" @click="onSave">保 存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 产品多图管理弹窗（所有角色可查看，管理员可上传/删除） -->
+    <el-dialog
+      v-model="photoDialogVisible"
+      :title="`产品相册 - ${photoCurrent?.model || ''}`"
+      width="720px"
+      destroy-on-close
+      :close-on-click-modal="false"
+    >
+      <div v-if="photoList.length === 0 && !photoLoading" style="text-align: center; padding: 40px 0; color: #909399;">
+        暂无额外图片
+      </div>
+      <div v-if="photoList.length > 0" class="photo-grid">
+        <div v-for="p in photoList" :key="p.id" class="photo-item">
+          <el-image
+            :src="p.photo_url"
+            :preview-src-list="photoList.map(x => x.photo_url)"
+            :initial-index="photoList.indexOf(p)"
+            fit="contain"
+            class="photo-thumb"
+            preview-teleported
+          />
+          <el-button
+            v-if="canEdit"
+            link type="danger" size="small"
+            class="photo-del"
+            @click="onDeletePhoto(p)"
+          >✕</el-button>
+          <div v-if="p.caption" class="photo-caption">{{ p.caption }}</div>
+        </div>
+      </div>
+
+      <div v-if="canEdit" class="photo-upload-area">
+        <el-upload
+          :show-file-list="false"
+          :before-upload="handlePhotoUpload"
+          accept="image/*"
+          :disabled="!photoCurrent"
+        >
+          <el-button type="primary" plain :loading="photoLoading">+ 上传新图片</el-button>
+        </el-upload>
+        <span style="margin-left: 12px; font-size: 12px; color: #909399;">
+          已选 {{ photoList.length }} 张（建议单张 ≤ 3MB，自动压缩为 800px 宽）
+        </span>
+      </div>
+
+      <template #footer>
+        <el-button @click="photoDialogVisible = false">关 闭</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -342,13 +393,19 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
-import { listProducts, createProduct, updateProduct, deleteProduct } from '@/api/products'
+import { listProducts, createProduct, updateProduct, deleteProduct, listProductPhotos, addProductPhoto, deleteProductPhoto } from '@/api/products'
 import { listSuppliers } from '@/api/suppliers'
 import { listHsCodes } from '@/api/hsCodes'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
 const canEdit = userStore.canEdit
+
+// 产品多图状态
+const photoDialogVisible = ref(false)
+const photoCurrent = ref(null)
+const photoList = ref([])
+const photoLoading = ref(false)
 
 const loading = ref(false)
 const saving = ref(false)
@@ -423,6 +480,59 @@ function handleProductImg(file) {
   }
   reader.readAsDataURL(file)
   return false // 阻止自动上传，只做本地压缩
+}
+
+/* ========== 产品多图 ========== */
+async function openPhotoGallery(row) {
+  photoCurrent.value = row
+  photoDialogVisible.value = true
+  photoLoading.value = true
+  try {
+    const d = await listProductPhotos(row.id)
+    photoList.value = d.list || []
+  } catch { /* 拦截器 */ }
+  finally { photoLoading.value = false }
+}
+
+// 压缩上传多图（800px 宽 JPEG，比主图 400px 大一些，浏览体验更好）
+function handlePhotoUpload(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const img = new Image()
+      img.onload = async () => {
+        const MAX_WIDTH = 800
+        let { width, height } = img
+        if (width > MAX_WIDTH) {
+          const scale = MAX_WIDTH / width
+          width = MAX_WIDTH; height = Math.round(img.height * scale)
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width; canvas.height = height
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+        const photoUrl = canvas.toDataURL('image/jpeg', 0.85)
+        try {
+          await addProductPhoto(photoCurrent.value.id, { photo_url: photoUrl })
+          const d = await listProductPhotos(photoCurrent.value.id)
+          photoList.value = d.list || []
+          ElMessage.success('图片上传成功')
+        } catch { /* 拦截器 */ }
+        resolve(false)
+      }
+      img.src = e.target.result
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+async function onDeletePhoto(p) {
+  const ok = await ElMessageBox.confirm('确认删除这张图片？', '删除确认', { type: 'warning' }).catch(() => false)
+  if (!ok) return
+  try {
+    await deleteProductPhoto(photoCurrent.value.id, p.id)
+    photoList.value = photoList.value.filter(x => x.id !== p.id)
+    ElMessage.success('已删除')
+  } catch { /* 拦截器 */ }
 }
 
 // 列表尺寸格式化
@@ -532,3 +642,54 @@ onMounted(() => {
   loadHsCodes()
 })
 </script>
+
+<style scoped>
+/* 产品多图 */
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.photo-item {
+  position: relative;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fafafa;
+}
+.photo-thumb {
+  width: 100%;
+  height: 160px;
+  display: block;
+  cursor: zoom-in;
+}
+.photo-del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  line-height: 22px;
+  padding: 0;
+  font-size: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+.photo-caption {
+  font-size: 11px;
+  color: #909399;
+  text-align: center;
+  padding: 4px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.photo-upload-area {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px dashed #dcdfe6;
+  display: flex;
+  align-items: center;
+}
+</style>
