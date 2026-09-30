@@ -161,7 +161,7 @@ router.get(
     const denied = checkOwnership(order, req, '订单');
     if (denied) return res.fail(denied, 404);
     const [items] = await pool.query(
-      `SELECT oi.*, p.spec_cn
+      `SELECT oi.*, p.spec_cn, p.our_model AS supplier_model
        FROM order_items oi
        LEFT JOIN products p ON oi.product_id = p.id
        WHERE oi.order_id = ?
@@ -222,21 +222,33 @@ router.get(
     ws.getCell('E4').value = (order.delivery_date || '').slice(0, 10);
     ws.getCell('I4').value = (req.operator && (req.operator.display_name || req.operator.username)) || '';
 
-    // ===== 一、产品明细清单（模板预留 5 行：8-12）=====
-    for (let i = 0; i < 5; i++) {
-      const row = 8 + i;
-      const it = items[i];
-      const ext = exts[i] || {};
-      ws.getCell(`A${row}`).value = i + 1;
-      ws.getCell(`B${row}`).value = (it && (it.supplier_model || it.model)) || '';
-      ws.getCell(`C${row}`).value = it ? (Number(it.qty) || 0) : '';
-      ws.getCell(`D${row}`).value = ext.shell_color || '';
-      ws.getCell(`E${row}`).value = ext.screen_spec || '';
-      ws.getCell(`F${row}`).value = ext.sensor || '';
-      ws.getCell(`G${row}`).value = ext.bracket || '';
-      ws.getCell(`H${row}`).value = ext.pan_spec || '';
-      ws.getCell(`I${row}`).value = ext.remark || '';
-    }
+    // ===== 一、产品明细清单（行源准备；写入延后到固定区之后，便于超 5 行时插行下移）=====
+    // item_extensions 已保存行快照（含 model，支持增删行）时用快照；否则按订单明细+扩展对齐
+    const hasSnapshot = exts.length > 0 && exts[0] && exts[0].model !== undefined;
+    const detailRows = hasSnapshot
+      ? exts.map((e) => ({
+          model: e.supplier_model || e.model || '',
+          qty: Number(e.qty) || 0,
+          shell_color: e.shell_color || '',
+          screen_spec: e.screen_spec || '',
+          sensor: e.sensor || '',
+          bracket: e.bracket || '',
+          pan_spec: e.pan_spec || '',
+          remark: e.remark || ''
+        }))
+      : items.map((it, i) => {
+          const ext = exts[i] || {};
+          return {
+            model: (it.supplier_model || it.model) || '',
+            qty: Number(it.qty) || 0,
+            shell_color: ext.shell_color || '',
+            screen_spec: ext.screen_spec || '',
+            sensor: ext.sensor || '',
+            bracket: ext.bracket || '',
+            pan_spec: ext.pan_spec || '',
+            remark: ext.remark || ''
+          };
+        });
 
     // ===== 二、核心电气、传感器与部件配置 =====
     // 标签行：A18 主板型号 / F18 充电模式 / A19 工作电压 / F19 PTC保护 / A20 电池规格 / F20 铭牌/铅封/说明书 / A21 面贴要求 / F21 客户商标(LOGO) / A22 包装说明
@@ -275,6 +287,31 @@ router.get(
       // 优先用用户保存的 content，回退到默认值
       ws.getCell(cellRef).value = item.content || DEFAULT_QUALITY_NOTES[i] || '';
     }
+
+    // ===== 明细写入（在固定区之后：超 5 行时 insertRow 会把已写内容连同样式整体下移，固定地址无需偏移）=====
+    const DETAIL_START = 8;    // 模板明细起始行
+    const DETAIL_CAPACITY = 5; // 模板预留明细行数（8-12）
+    const extra = Math.max(0, detailRows.length - DETAIL_CAPACITY);
+    for (let k = 0; k < extra; k++) {
+      const newRow = ws.insertRow(DETAIL_START + DETAIL_CAPACITY + k, []);
+      const srcRow = ws.getRow(DETAIL_START + DETAIL_CAPACITY - 1); // 模板明细最后一行作样式源
+      for (let c = 1; c <= 9; c++) {
+        newRow.getCell(c).style = { ...(srcRow.getCell(c).style || {}) };
+      }
+      newRow.commit();
+    }
+    detailRows.forEach((r, i) => {
+      const row = DETAIL_START + i;
+      ws.getCell(`A${row}`).value = i + 1;
+      ws.getCell(`B${row}`).value = r.model;
+      ws.getCell(`C${row}`).value = r.qty;
+      ws.getCell(`D${row}`).value = r.shell_color;
+      ws.getCell(`E${row}`).value = r.screen_spec;
+      ws.getCell(`F${row}`).value = r.sensor;
+      ws.getCell(`G${row}`).value = r.bracket;
+      ws.getCell(`H${row}`).value = r.pan_spec;
+      ws.getCell(`I${row}`).value = r.remark;
+    });
 
     // ===== 输出 .xlsx =====
     const filename = `PurchaseOrder_${order.pi_number || 'export'}.xlsx`;

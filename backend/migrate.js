@@ -913,6 +913,30 @@ const migrations = [
       await runSQL(conn, `ALTER TABLE samples_tracking
         ADD COLUMN supplier_id INT NULL DEFAULT NULL COMMENT '供应商ID' AFTER client_id`);
     }
+  },
+  // ===== 035 · samples_tracking 新增 address（地址字段，编辑弹窗独占一行多行文本框）=====
+  {
+    id: '035',
+    desc: 'samples_tracking 新增 address 客户地址字段（多行，编辑弹窗展示）',
+    async check(conn) {
+      return await columnExists(conn, 'samples_tracking', 'address');
+    },
+    async up(conn) {
+      await runSQL(conn, `ALTER TABLE samples_tracking
+        ADD COLUMN address TEXT NULL COMMENT '客户地址（多行）' AFTER supplier_id`);
+    }
+  },
+  // ===== 036 · suppliers 新增 credit_code（统一社会信用代码）=====
+  {
+    id: '036',
+    desc: 'suppliers 新增 credit_code 统一社会信用代码字段',
+    async check(conn) {
+      return await columnExists(conn, 'suppliers', 'credit_code');
+    },
+    async up(conn) {
+      await runSQL(conn, `ALTER TABLE suppliers
+        ADD COLUMN credit_code VARCHAR(50) NULL DEFAULT NULL COMMENT '统一社会信用代码' AFTER name`);
+    }
   }
 ];
 

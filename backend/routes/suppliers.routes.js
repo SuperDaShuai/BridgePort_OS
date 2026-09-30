@@ -4,7 +4,7 @@ const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers'
 
 const router = express.Router();
 
-const ALLOWED = ['name', 'city', 'main_category', 'factory_address', 'bank_name', 'account_number'];
+const ALLOWED = ['name', 'credit_code', 'city', 'main_category', 'factory_address', 'bank_name', 'account_number'];
 
 // 同步联系人：先删后插（必须在事务内调用）
 async function syncContacts(conn, ownerId, contacts) {

@@ -9,7 +9,7 @@ const ALLOWED = [
   'name_en', 'name_cn', 'address_en', 'address_cn', 'tel', 'email', 'tax_number',
   'bank_name', 'bank_account',
   'default_usd_rate', 'default_tax_refund_rate',
-  'payment_terms_template', 'arbitration_clause', 'award_clause', 'seal_img'
+  'payment_terms_template', 'arbitration_clause', 'award_clause', 'seal_img', 'contract_seal_img'
 ];
 
 // 确保存在唯一默认行，返回其 id

@@ -29,6 +29,9 @@
     <el-table v-loading="loading" :data="list" border stripe>
       <el-table-column prop="sample_number" label="样品单号" width="150" />
       <el-table-column prop="client_name" label="客户" min-width="150" show-overflow-tooltip />
+      <el-table-column prop="country" label="国家" width="120" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.country || '—' }}</template>
+      </el-table-column>
       <el-table-column prop="signing_date" label="签约日期" width="105" />
       <el-table-column prop="delivery_date" label="交货日期" width="105" />
       <el-table-column label="明细" min-width="180">
@@ -99,7 +102,7 @@
             <el-date-picker v-model="form.delivery_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
           </el-form-item>
           <el-form-item label="签约客户" prop="client_id">
-            <el-select v-model="form.client_id" filterable placeholder="选择客户" style="width: 100%">
+            <el-select v-model="form.client_id" filterable placeholder="选择客户" style="width: 100%" @change="onClientPick">
               <el-option v-for="c in clientOptions" :key="c.id" :label="c.name_en" :value="c.id">
                 <span>{{ c.name_en }}</span>
                 <span class="opt-sub" v-if="c.country"> · {{ c.country }}</span>
@@ -107,6 +110,9 @@
             </el-select>
           </el-form-item>
         </div>
+        <el-form-item label="地址">
+          <el-input v-model="form.address" type="textarea" :rows="2" placeholder="客户地址（多行，默认关联客户资料中的地址）" />
+        </el-form-item>
         <div class="form-grid-4">
           <el-form-item label="来源询盘">
             <el-select v-model="form.rfq_id" filterable clearable placeholder="选填" style="width: 100%">
@@ -177,9 +183,17 @@
           <el-table-column type="index" label="No." width="42" align="center" />
           <el-table-column label="Art No." width="170">
             <template #default="{ row }">
-              <el-select v-model="row.product_id" filterable clearable placeholder="选择产品" size="small" style="width: 100%" @change="(val) => onProductPick(row, val)">
-                <el-option v-for="p in productOptions" :key="p.id" :label="p.model" :value="p.id" />
-              </el-select>
+              <!-- 输入框+产品建议：可直接输入任意自定义型号；点选建议项时自动关联填充产品信息 -->
+              <el-autocomplete
+                v-model="row.model"
+                :fetch-suggestions="fetchArtSuggestions"
+                value-key="model"
+                placeholder="选择产品或直接输入"
+                size="small"
+                style="width: 100%"
+                clearable
+                @select="(item) => onArtSelect(row, item)"
+              />
             </template>
           </el-table-column>
           <el-table-column label="图片" width="62" align="center">
@@ -203,7 +217,7 @@
               <span style="cursor:pointer; user-select:none" @click="togglePriceCurrency">单价({{ priceSign }}) ⇄</span>
             </template>
             <template #default="{ row }">
-              <el-input-number v-model="row.price" :min="0" :step="0.01" :controls="false" size="small" style="width: 100%" @change="calcRow(row)" />
+              <el-input-number v-model="row.price" :step="0.01" :controls="false" size="small" style="width: 100%" @change="onPriceChange(row)" />
             </template>
           </el-table-column>
           <el-table-column :label="`总价(${priceSign})`" width="110" align="right">
@@ -304,9 +318,9 @@ const userStore = useUserStore()
 // 样品单操作权限：跟单(5)/财务(4)只读，业务员(3)可操作，主管及以上不限
 const canEdit = userStore.permissionLevel <= 3
 
-const FEEDBACK_STATUSES = ['准备中', '已寄出', '客户已签收', '确认合格', '需重新打样']
+const FEEDBACK_STATUSES = ['准备中', '待下单', '已下单', '已寄出', '客户已签收', '确认合格', '需重新打样']
 const feedbackTag = {
-  准备中: 'info', 已寄出: 'primary', 客户已签收: 'warning', 确认合格: 'success', 需重新打样: 'danger'
+  准备中: 'info', 待下单: 'warning', 已下单: '', 已寄出: 'primary', 客户已签收: 'warning', 确认合格: 'success', 需重新打样: 'danger'
 }
 
 const loading = ref(false)
@@ -388,10 +402,20 @@ async function loadOptions() {
 function onSearch() { query.page = 1; loadList() }
 
 /* ========== 明细行交互 ========== */
-function onProductPick(row, productId) {
-  row.product_id = productId
-  const p = productOptions.value.find(x => x.id === productId)
+// Art No. 建议列表：按输入过滤产品库型号（空输入返回前20个供浏览）
+function fetchArtSuggestions(queryString, cb) {
+  const q = String(queryString || '').trim().toLowerCase()
+  const list = productOptions.value
+    .filter(p => !q || String(p.model || '').toLowerCase().includes(q))
+    .slice(0, 20)
+  cb(list)
+}
+
+// 点选建议项 → 自动关联填充产品信息；手动输入自定义型号时仅更新文本，其余字段保留可手动维护
+function onArtSelect(row, item) {
+  const p = productOptions.value.find(x => x.id === item.id)
   if (!p) return
+  row.product_id = p.id
   row.model = p.model
   row.name_en = p.name_en || ''
   row.hs_code = p.hs_code || ''
@@ -412,17 +436,32 @@ function onProductPick(row, productId) {
   calcRow(row)
   // 异步加载产品多图
   import('@/api/products').then(({ listProductPhotos }) => {
-    listProductPhotos(productId).then(d => {
+    listProductPhotos(p.id).then(d => {
       row._photos = (d.list || []).map(x => x.photo_url)
     }).catch(() => {})
   })
 }
 
-function calcRow(row) {
-  // 注意：手动改单价不回写 price_rmb 基准，避免 toFixed 累积漂移
+// 用户手动改单价：严格按当前币种同步回写 price_rmb 基准（与外销订单一致）
+// RMB 模式 → price_rmb = price；USD 模式 → price_rmb = price × 汇率
+// 保证再次编辑回显或切换币种时，price 能从基准派生出用户手动输入的值，不被产品库价覆盖
+// 允许负数单价（调整项/折扣等场景），负数同样回写基准
+function onPriceChange(row) {
   const p = Number(row.price) || 0
-  const q = Number(row.qty) || 0
-  row.subtotal_amount = Number((q * p).toFixed(2))
+  if (priceCurrency.value === 'RMB') {
+    row.price_rmb = p
+  } else {
+    const usdRate = Number(companySettings.value.default_usd_rate) || 7.2
+    row.price_rmb = Number((p * usdRate).toFixed(2))
+  }
+  calcRow(row)
+}
+
+function calcRow(row) {
+  // 单价允许负数（调整项场景）；数量为 0 的行视为调整项，小计 = 单价本身
+  const p = Number(row.price) || 0
+  const q = Math.max(0, Number(row.qty) || 0)
+  row.subtotal_amount = Number(((q > 0 ? q : 1) * p).toFixed(2))
 }
 
 function togglePriceCurrency() {
@@ -430,9 +469,9 @@ function togglePriceCurrency() {
   const to = priceCurrency.value === 'RMB' ? 'USD' : 'RMB'
   ;(form.value.items || []).forEach((it) => {
     const rmb = Number(it.price_rmb) || 0
-    if (rmb <= 0) return
+    if (!rmb) return // 0 不换算；负数（调整项）同样参与换算
     it.price = to === 'RMB' ? rmb : Number((rmb / usdRate).toFixed(2))
-    it.subtotal_amount = Number(((Number(it.qty) || 0) * Number(it.price)).toFixed(2))
+    calcRow(it) // 统一重算小计（含调整项行：小计=单价本身）
   })
   priceCurrency.value = to
 }
@@ -443,6 +482,14 @@ function addItemRow() { form.value.items.push(blankItem()) }
 function onPayMethodChange(method) {
   if (method === 'alipay') form.value.bank_account_id = null
   else form.value.alipay_qrcode = null
+}
+
+function onClientPick(clientId) {
+  // 选择客户时，若地址为空则自动填充客户资料中的 address_en
+  const cli = clientOptions.value.find(c => c.id === clientId)
+  if (cli && cli.address_en && !form.value.address) {
+    form.value.address = cli.address_en
+  }
 }
 
 function handleAlipayImg(file) {
@@ -500,7 +547,7 @@ async function openEdit(row) {
     let baseRmb = Number(it.price_rmb)
     if (!baseRmb || isNaN(baseRmb)) {
       const savedPrice = Number(it.price) || 0
-      if (savedPrice > 0) {
+      if (savedPrice) { // 负数价格（调整项）同样补偿基准
         const usdRate = Number(companySettings.value.default_usd_rate) || 7.2
         baseRmb = detail.currency === 'USD'
           ? Number((savedPrice * usdRate).toFixed(2))
@@ -508,7 +555,7 @@ async function openEdit(row) {
       }
     }
     let displayPrice = Number(it.price)
-    if (baseRmb > 0) {
+    if (baseRmb) { // 负数基准（调整项）同样参与派生
       const usdRate = Number(companySettings.value.default_usd_rate) || 7.2
       displayPrice = priceCurrency.value === 'USD'
         ? Number((baseRmb / usdRate).toFixed(2))
@@ -518,7 +565,8 @@ async function openEdit(row) {
       ...it,
       price_rmb: baseRmb || undefined,
       price: displayPrice,
-      subtotal_amount: Number(((Number(it.qty) || 0) * displayPrice).toFixed(2))
+      // 数量为 0 的调整项行：小计 = 单价本身
+      subtotal_amount: Number((((Number(it.qty) || 0) || 1) * displayPrice).toFixed(2))
     }
   })
   form.value = detail
@@ -583,14 +631,16 @@ function numberToEnglishWords(num) {
     str += (m[5] != 0) ? ((str != '') ? 'AND ' : '') + (a[Number(m[5])] || b[m[5][0]] + ' ' + a[m[5][1]]) : ''
     return str.trim()
   }
-  const parts = Number(num || 0).toFixed(2).split('.')
+  // 负数（调整项）取绝对值转换并加 MINUS 前缀，避免负号破坏数字解析
+  const neg = Number(num) < 0
+  const parts = Math.abs(Number(num || 0)).toFixed(2).split('.')
   const integerPart = parseInt(parts[0], 10)
   const decimalPart = parseInt(parts[1], 10)
   let words = inWords(integerPart)
   if (!words) words = 'ZERO'
   let result = words
   if (decimalPart > 0) result += ' AND CENTS ' + inWords(decimalPart)
-  return result
+  return (neg ? 'MINUS ' : '') + result
 }
 
 // 样品单总额计算（样品无箱数概念，仅合计数量与金额）
@@ -599,7 +649,8 @@ function getSampleTotals(order) {
   ;(order.items || []).forEach(it => {
     const q = Number(it.qty || 0)
     const p = Number(it.price || 0)
-    qty += q; amount += q * p
+    // 数量为 0 的调整项行：金额 = 单价本身（不计入数量合计）
+    qty += q; amount += (q > 0 ? q : 1) * p
   })
   return { qty, amount }
 }
@@ -686,7 +737,7 @@ function buildPiHtml(order) {
         </td>
         <td style="text-align:center; font-weight:bold;">${qty}</td>
         <td style="text-align:center;">${currSign}${formatMoney(price)}</td>
-        <td style="text-align:right; font-weight:bold;">${currSign}${formatMoney(qty * price)}</td>
+        <td style="text-align:right; font-weight:bold;">${currSign}${formatMoney((qty > 0 ? qty : 1) * price)}</td>
       </tr>
     `
   }).join('')

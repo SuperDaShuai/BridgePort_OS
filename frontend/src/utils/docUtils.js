@@ -68,7 +68,8 @@ export function getOrderTotals(order) {
     // 件数 = MOQ ÷ 件/箱（与 groupItemsByHs 保持一致）
     const itemCtns = pcs > 0 ? q / pcs : 0
     qty += q
-    amount += q * p
+    // 数量为 0 的调整项行：金额 = 单价本身（与订单编辑器 calcRow 规则一致）
+    amount += (q > 0 ? q : 1) * p
     ctns += itemCtns
     nw += itemCtns * Number(it.nw_per_ctn || 0)
     gw += itemCtns * Number(it.gw_per_ctn || 0)

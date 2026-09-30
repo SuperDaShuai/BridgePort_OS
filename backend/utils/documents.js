@@ -85,13 +85,30 @@ function generateDefaultDocuments(piNumber, signingDate, customsResp, items, ctx
   const purchaseContract = {
     contract_no: piNumber + '-CG',
     sign_date: signingDate,
-    delivery_deadline: '合同签订后30天内完成生产交货',
-    delivery_location: '送至买方指定出口监管仓库',
-    payment_terms: '预付定金30%，出货前买方QC验货合格，供方开具13%增值税专用发票后结清70%余款。',
-    quality_req: '外销全检出厂标准',
-    packing_req: '海运中性纸箱',
-    penalty_req: '日万分之五违约金+质量全赔',
-    dispute_req: '需方所在地法院起诉'
+    // 一、合同双方
+    buyer_name: '',           // 采购方（甲方）名称
+    buyer_credit_code: '',    // 甲方统一社会信用代码
+    buyer_address: '',        // 甲方地址
+    supplier_name: '',        // 供应方（乙方）名称
+    supplier_credit_code: '',// 乙方统一社会信用代码
+    supplier_address: '',     // 乙方地址
+    // 三、质量要求与检测（3条，按模板默认）
+    quality_req_1: '乙方需按上述规格参数生产，产品需符合《电子秤通用技术规范》（GB/T 7722-2017），且满足防水、称重精准等核心功能要求；',
+    quality_req_2: '乙方需对所有样品进行全检（含功能测试、外观检查），确保"检测没问题"后再打包，甲方有权抽检，若发现不合格品，乙方需免费更换；',
+    quality_req_3: '样品需附带产品合格检测报告（每台对应检测记录）。',
+    // 四、交货条款
+    delivery_location: '甲方指定地址',
+    delivery_time: '合同签订后30天内',
+    packing_req: '采用出口标准包装（防水、防摔），外箱标注"样品""易碎"标识。',
+    // 五、结算条款
+    payment_method: '验货完成后全额付款',
+    payee_name: '',           // 收款人（默认取供应商第一个联系人）
+    payee_account: '',        // 收款账号
+    payee_bank: '',           // 收款银行
+    invoice_clause: '以上价格是出厂不含税价格',
+    // 六、其他条款（2条，按模板默认）
+    other_clause_1: '本合同一式两份，甲乙双方各执一份，签字盖章后生效；',
+    other_clause_2: '未尽事宜，双方协商解决；协商不成的，向永康人民法院提起诉讼。'
   };
 
   const productionOrder = {

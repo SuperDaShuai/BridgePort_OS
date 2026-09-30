@@ -51,11 +51,16 @@
       width="760px"
       destroy-on-close
     >
-      <el-form ref="formRef" :model="form" :rules="rules" :disabled="readonly" label-width="90px">
+      <el-form ref="formRef" :model="form" :rules="rules" :disabled="readonly" label-width="130px">
         <el-row :gutter="16">
           <el-col :span="12">
             <el-form-item label="工厂名称" prop="name">
               <el-input v-model="form.name" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="统一社会信用代码">
+              <el-input v-model="form.credit_code" placeholder="18位统一社会信用代码" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -123,7 +128,7 @@ const rules = {
 }
 
 const blankForm = () => ({
-  name: '', city: '', main_category: '', factory_address: '',
+  name: '', credit_code: '', city: '', main_category: '', factory_address: '',
   bank_name: '', account_number: '', contacts: []
 })
 

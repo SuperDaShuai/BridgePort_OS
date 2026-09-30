@@ -202,9 +202,17 @@
           <el-table-column type="index" label="No." width="45" align="center" />
           <el-table-column label="Art No." width="170">
             <template #default="{ row }">
-              <el-select v-model="row.product_id" filterable clearable placeholder="选择产品" size="small" style="width: 100%" @change="(val) => onProductPick(row, val)">
-                <el-option v-for="p in productOptions" :key="p.id" :label="p.model" :value="p.id" />
-              </el-select>
+              <!-- 输入框+产品建议：可直接输入任意自定义型号；点选建议项时自动关联填充产品信息 -->
+              <el-autocomplete
+                v-model="row.model"
+                :fetch-suggestions="fetchArtSuggestions"
+                value-key="model"
+                placeholder="选择产品或直接输入"
+                size="small"
+                style="width: 100%"
+                clearable
+                @select="(item) => onArtSelect(row, item)"
+              />
             </template>
           </el-table-column>
           <el-table-column label="图片" width="70" align="center">
@@ -238,7 +246,7 @@
               <span style="cursor:pointer; user-select:none" @click="togglePriceCurrency">单价({{ priceSign }}) ⇄</span>
             </template>
             <template #default="{ row }">
-              <el-input-number v-model="row.price" :min="0" :step="0.01" :controls="false" size="small" style="width: 100%" @change="onPriceChange(row)" />
+              <el-input-number v-model="row.price" :step="0.01" :controls="false" size="small" style="width: 100%" @change="onPriceChange(row)" />
             </template>
           </el-table-column>
           <el-table-column :label="`总价(${priceSign})`" width="110" align="right">
@@ -384,14 +392,16 @@ function numberToEnglishWords(num) {
     str += (m[5] != 0) ? ((str != '') ? 'AND ' : '') + (a[Number(m[5])] || b[m[5][0]] + ' ' + a[m[5][1]]) : ''
     return str.trim()
   }
-  const parts = Number(num || 0).toFixed(2).split('.')
+  // 负数（调整项）取绝对值转换并加 MINUS 前缀，避免负号破坏数字解析
+  const neg = Number(num) < 0
+  const parts = Math.abs(Number(num || 0)).toFixed(2).split('.')
   const integerPart = parseInt(parts[0], 10)
   const decimalPart = parseInt(parts[1], 10)
   let words = inWords(integerPart)
   if (!words) words = 'ZERO'
   let result = words
   if (decimalPart > 0) result += ' AND CENTS ' + inWords(decimalPart)
-  return result
+  return (neg ? 'MINUS ' : '') + result
 }
 
 function getOrderTotals(order) {
@@ -400,7 +410,8 @@ function getOrderTotals(order) {
     const q = Number(it.qty || 0)
     const p = Number(it.price || 0)
     const itemCtns = Number(it.ctns || Math.ceil(q / (it.pcs_per_ctn || 1)))
-    qty += q; amount += q * p; ctns += itemCtns
+    // 数量为 0 的调整项行：金额 = 单价本身（不计入数量合计）
+    qty += q; amount += (q > 0 ? q : 1) * p; ctns += itemCtns
     nw += itemCtns * Number(it.nw_per_ctn || it.nwPerCtn || 0)
     gw += itemCtns * Number(it.gw_per_ctn || it.gwPerCtn || 0)
     cbm += itemCtns * Number(it.cbm_per_ctn || it.cbmPerCtn || 0)
@@ -443,11 +454,23 @@ function onClientChange(clientId) {
   const c = clientOptions.value.find(x => x.id === clientId)
   if (c && c.destination_port) form.value.destination_port = c.destination_port
 }
-function onProductPick(row, productId) {
-  row.product_id = productId
-  const p = productOptions.value.find(x => x.id === productId)
+/* ========== 明细行交互 ========== */
+// Art No. 建议列表：按输入过滤产品库型号（空输入返回前20个供浏览）
+function fetchArtSuggestions(queryString, cb) {
+  const q = String(queryString || '').trim().toLowerCase()
+  const list = productOptions.value
+    .filter(p => !q || String(p.model || '').toLowerCase().includes(q))
+    .slice(0, 20)
+  cb(list)
+}
+
+// 点选建议项 → 自动关联填充产品信息；手动输入自定义型号时仅更新文本，其余字段保留可手动维护
+function onArtSelect(row, item) {
+  const p = productOptions.value.find(x => x.id === item.id)
   if (!p) return
-  row.model = p.model; row.name_en = p.name_en
+  row.product_id = p.id
+  row.model = p.model
+  row.name_en = p.name_en
   row.hs_code = p.hs_code; row.unit = p.unit || '台'; row.img_url = p.img_url || ''
   row.pcs_per_ctn = p.pcs_per_ctn ?? 1
   row.nw_per_ctn = p.net_weight_kg ?? null; row.gw_per_ctn = p.gross_weight_kg ?? null
@@ -466,7 +489,7 @@ function onProductPick(row, productId) {
   calcRow(row)
   // 异步加载产品多图（不阻塞交互，用于图片预览扩展）
   import('@/api/products').then(({ listProductPhotos }) => {
-    listProductPhotos(productId).then(d => {
+    listProductPhotos(p.id).then(d => {
       row._photos = (d.list || []).map(x => x.photo_url)
     }).catch(() => {})
   })
@@ -496,8 +519,15 @@ function calcRow(row) {
   const pcs = Number(row.pcs_per_ctn) || 0
   const ctns = Number(row.ctns) || 0
   const p = Number(row.price) || 0
-  row.qty = pcs * ctns
-  row.subtotal_amount = Number((row.qty * p).toFixed(2))
+  if (pcs > 0 && ctns > 0) {
+    // 正常商品行：数量 = 单箱数量 × 箱数，小计 = 数量 × 单价
+    row.qty = pcs * ctns
+    row.subtotal_amount = Number((row.qty * p).toFixed(2))
+  } else {
+    // 调整项行（未填单箱数量/箱数）：数量保持，小计 = 单价本身（负数调整额直接计入总额）
+    row.qty = Number(row.qty) || 0
+    row.subtotal_amount = Number(p.toFixed(2))
+  }
 }
 
 // 切换明细单价币种：人民币 ↔ 美元
@@ -507,10 +537,9 @@ function togglePriceCurrency() {
   const to = priceCurrency.value === 'RMB' ? 'USD' : 'RMB'
   ;(form.value.items || []).forEach((it) => {
     const rmb = Number(it.price_rmb) || 0
-    if (rmb <= 0) return
+    if (!rmb) return // 0 不换算；负数（调整项）同样参与换算
     it.price = to === 'RMB' ? rmb : Number((rmb / usdRate).toFixed(2))
-    const p = Number(it.price) || 0
-    it.subtotal_amount = Number(((Number(it.qty) || 0) * p).toFixed(2))
+    calcRow(it) // 统一重算小计（含调整项行：小计=单价本身）
   })
   priceCurrency.value = to
 }
@@ -554,7 +583,7 @@ async function openEdit(row) {
     }
     // price 按当前开关币种从基准派生，避免反复换算漂移
     let displayPrice = Number(it.price)
-    if (baseRmb > 0) {
+    if (baseRmb) { // 负数基准（调整项）同样参与派生
       displayPrice = priceCurrency.value === 'USD'
         ? Number((baseRmb / (Number(companySettings.value.default_usd_rate) || 7.2)).toFixed(2))
         : baseRmb
@@ -563,7 +592,8 @@ async function openEdit(row) {
       ...it,
       price_rmb: baseRmb || undefined,
       price: displayPrice,
-      subtotal_amount: Number(((Number(it.qty) || 0) * displayPrice).toFixed(2))
+      // 数量为 0 的调整项行：小计 = 单价本身
+      subtotal_amount: Number((((Number(it.qty) || 0) || 1) * displayPrice).toFixed(2))
     }
   })
   form.value = detail
@@ -732,7 +762,7 @@ function buildPiHtml(order) {
         <td style="text-align:center;">${it.ctns || ''}</td>
         <td style="text-align:center; font-weight:bold;">${qty}</td>
         <td style="text-align:center;">${currSign}${formatMoney(price)}</td>
-        <td style="text-align:right; font-weight:bold;">${currSign}${formatMoney(qty * price)}</td>
+        <td style="text-align:right; font-weight:bold;">${currSign}${formatMoney((qty > 0 ? qty : 1) * price)}</td>
         <td style="text-align:center;">${rowCbmVal}</td>
       </tr>
     `

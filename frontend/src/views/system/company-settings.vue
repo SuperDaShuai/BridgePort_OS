@@ -92,7 +92,24 @@
                 >
                   <el-button size="small" type="primary" plain>选择签章图片</el-button>
                 </el-upload>
-                <span style="font-size:11px; color:#909399;">建议透明背景 PNG，上传后自动压缩为 base64</span>
+                <span style="font-size:11px; color:#909399;">用于外销 PI、报关单等单据</span>
+              </div>
+            </el-form-item>
+            <el-form-item label="合同专用章图片">
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div v-if="financeForm.contract_seal_img" style="position:relative; display:inline-block;">
+                  <img :src="financeForm.contract_seal_img" style="max-width:200px; max-height:100px; border:1px solid #e2e8f0; border-radius:4px;" />
+                  <el-button size="small" type="danger" link @click="financeForm.contract_seal_img = ''" style="margin-left:6px;">移除</el-button>
+                </div>
+                <el-upload
+                  v-else
+                  :show-file-list="false"
+                  :before-upload="handleContractSealImg"
+                  accept="image/*"
+                >
+                  <el-button size="small" type="primary" plain>选择合同章图片</el-button>
+                </el-upload>
+                <span style="font-size:11px; color:#909399;">建议透明背景 PNG，用于购销合同顶部展示</span>
               </div>
             </el-form-item>
             <el-form-item>
@@ -226,7 +243,7 @@ const companyForm = reactive({
 })
 const financeForm = reactive({
   default_usd_rate: 7.2, default_tax_refund_rate: 13,
-  arbitration_clause: '', award_clause: '', seal_img: ''
+  arbitration_clause: '', award_clause: '', seal_img: '', contract_seal_img: ''
 })
 
 const companyRules = {
@@ -245,6 +262,7 @@ async function loadSettings() {
   financeForm.arbitration_clause = d.arbitration_clause || ''
   financeForm.award_clause = d.award_clause || ''
   financeForm.seal_img = d.seal_img || ''
+  financeForm.contract_seal_img = d.contract_seal_img || ''
 }
 
 async function onSaveCompany() {
@@ -275,8 +293,8 @@ async function onSaveFinance() {
   }
 }
 
-// 电子签章图片上传：压缩为 600px 宽 base64（保持透明 PNG 格式，质量 0.9）
-function handleSealImg(file) {
+// 通用图片压缩：压缩为 600px 宽 base64（保持透明 PNG 格式，质量 0.9）
+function compressImage(file, setter, label) {
   const MAX_WIDTH = 600
   const reader = new FileReader()
   reader.onload = (evt) => {
@@ -288,16 +306,17 @@ function handleSealImg(file) {
       canvas.height = img.height * scale
       const ctx = canvas.getContext('2d')
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-      // 保留 PNG 格式以支持透明背景；非 PNG 则回退 JPEG
       const outType = file.type === 'image/png' ? 'image/png' : 'image/jpeg'
-      financeForm.seal_img = canvas.toDataURL(outType, 0.9)
-      ElMessage.success('签章图片已预览，请点击"保存参数与模板"落库')
+      setter(canvas.toDataURL(outType, 0.9))
+      ElMessage.success(`${label}已预览，请点击"保存参数与模板"落库`)
     }
     img.src = evt.target.result
   }
   reader.readAsDataURL(file)
   return false // 阻止自动上传，只做本地压缩
 }
+function handleSealImg(file) { return compressImage(file, (v) => financeForm.seal_img = v, '电子签章图片') }
+function handleContractSealImg(file) { return compressImage(file, (v) => financeForm.contract_seal_img = v, '合同专用章图片') }
 
 /* ── 收款路线库（bank_accounts 表） ── */
 const bankLoading = ref(false)

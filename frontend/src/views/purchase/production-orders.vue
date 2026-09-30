@@ -187,17 +187,29 @@
           </el-col>
         </el-row>
 
-        <!-- 分区 4：明细行扩展字段 -->
+        <!-- 分区 4：明细行扩展字段（支持添加/删除明细行，保存后同步至预览打印与 Excel 下载） -->
         <el-divider content-position="left">四、产品明细扩展字段（外壳颜色 / 显示屏规格 / 传感器 / 支架 / 秤盘规格 / 备注）</el-divider>
+        <div class="ext-toolbar">
+          <el-button type="primary" size="small" @click="addItemRow">+ 添加明细行</el-button>
+          <span class="ext-hint">可添加自定义行或删除不需要的行，保存后预览/打印与 Excel 下载同步生效</span>
+        </div>
         <el-table :data="editingItems" border size="small" style="width: 100%">
           <el-table-column label="序号" width="50" align="center" type="index" />
-          <el-table-column label="产品型号（供应商）" width="140">
+          <el-table-column label="产品型号（供应商）" width="150">
             <template #default="{ row }">
-              <strong>{{ row.supplier_model || row.model || '—' }}</strong>
-              <div v-if="row.supplier_model && row.model" style="font-size:10px; color:#94a3b8; margin-top:2px;">自编号: {{ row.model }}</div>
+              <el-input v-if="row._custom" v-model="row.model" size="small" placeholder="输入自定义型号" />
+              <template v-else>
+                <strong>{{ row.supplier_model || row.model || '—' }}</strong>
+                <div v-if="row.supplier_model && row.model" style="font-size:10px; color:#94a3b8; margin-top:2px;">自编号: {{ row.model }}</div>
+              </template>
             </template>
           </el-table-column>
-          <el-table-column label="数量" width="80" align="right" prop="qty" />
+          <el-table-column label="数量" width="90" align="right">
+            <template #default="{ row }">
+              <el-input-number v-if="row._custom" v-model="row.qty" size="small" :min="0" :controls="false" style="width: 100%" />
+              <template v-else>{{ row.qty }}</template>
+            </template>
+          </el-table-column>
           <el-table-column label="外壳颜色" width="100">
             <template #default="{ row }">
               <el-input v-model="row.shell_color" size="small" placeholder="如:曜石黑" />
@@ -223,9 +235,14 @@
               <el-input v-model="row.pan_spec" size="small" />
             </template>
           </el-table-column>
-          <el-table-column label="备注 / 特殊要求" min-width="160">
+          <el-table-column label="备注 / 特殊要求" min-width="150">
             <template #default="{ row }">
               <el-input v-model="row.remark" size="small" />
+            </template>
+          </el-table-column>
+          <el-table-column label="删" width="50" align="center">
+            <template #default="{ $index }">
+              <el-button link type="danger" @click="editingItems.splice($index, 1)">✕</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -419,7 +436,15 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
   const today = new Date()
   const orderDate = today.toISOString().slice(0, 10)
   const exts = po.item_extensions || []
-  const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0)
+  // 行源：item_extensions 已保存行快照（含 model，支持增删行）时用快照；否则按订单明细+扩展对齐
+  const hasSnapshot = exts.length > 0 && exts[0].model !== undefined
+  const rows = hasSnapshot
+    ? exts.map((e) => ({ model: e.supplier_model || e.model || '', qty: Number(e.qty) || 0, ext: e }))
+    : items.map((it, idx) => {
+        const prod = it.product_id ? productMap[it.product_id] : null
+        return { model: (prod && prod.our_model) || it.model || '', qty: it.qty || 0, ext: exts[idx] || {} }
+      })
+  const totalQty = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0)
 
   // 通用样式
   const BORDER = '1px solid #0f172a'
@@ -428,14 +453,12 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
   const headStyle = `border:${BORDER}; padding:6px 8px; font-size:11px; font-weight:bold; text-align:center; ${HEAD_BG}`
 
   // ===== 一、产品明细清单 =====
-  const detailRows = items.map((it, idx) => {
-    const ext = exts[idx] || {}
-    const prod = it.product_id ? productMap[it.product_id] : null
-    const model = (prod && prod.our_model) || it.model || ''
+  const detailRows = rows.map((r, idx) => {
+    const ext = r.ext || {}
     return `<tr>
       <td style="${cellStyle} text-align:center;">${idx + 1}</td>
-      <td style="${cellStyle}"><strong>${model}</strong></td>
-      <td style="${cellStyle} text-align:right;">${it.qty || 0}</td>
+      <td style="${cellStyle}"><strong>${r.model}</strong></td>
+      <td style="${cellStyle} text-align:right;">${r.qty || 0}</td>
       <td style="${cellStyle}">${ext.shell_color || ''}</td>
       <td style="${cellStyle}">${ext.screen_spec || ''}</td>
       <td style="${cellStyle}">${ext.sensor || ''}</td>
@@ -582,31 +605,47 @@ async function openEdit(row) {
     const supplier = supplierOptions.value.find(s => s.id === detail.supplier_id)
     const refNo = row.ref_number || detail.pi_number || detail.sample_number || ''
 
-    // 明细行扩展字段：按 index 与 item_extensions 对齐；产品型号优先用产品库的供应商型号(our_model)
+    // 明细行扩展字段：item_extensions 已保存行快照（含 model，支持增删行）时用快照；
+    // 否则按订单/样品单明细 index 对齐（旧数据兼容）；产品型号优先用产品库的供应商型号(our_model)
     const exts = po.item_extensions || []
+    const hasSnapshot = exts.length > 0 && exts[0].model !== undefined
     // 拉产品库建映射，取供应商型号
     let productMap = {}
     try {
       const pd = await listProducts({ page: 1, pageSize: 500 })
       productMap = Object.fromEntries((pd.list || []).map(p => [p.id, p]))
     } catch { /* 产品映射失败时回退自编号 */ }
-    editingItems.value = (detail.items || []).map((it, idx) => {
-      const ext = exts[idx] || {}
-      const prod = it.product_id ? productMap[it.product_id] : null
-      return {
-        idx,
-        product_id: it.product_id,
-        model: it.model,
-        supplier_model: prod ? (prod.our_model || '') : '',
-        qty: it.qty,
-        shell_color: ext.shell_color || '',
-        screen_spec: ext.screen_spec || '',
-        sensor: ext.sensor || '',
-        bracket: ext.bracket || '',
-        pan_spec: ext.pan_spec || '',
-        remark: ext.remark || ''
-      }
-    })
+    editingItems.value = hasSnapshot
+      ? exts.map((ext, idx) => ({
+          idx,
+          product_id: null,
+          model: ext.model || '',
+          supplier_model: ext.supplier_model || '',
+          qty: Number(ext.qty) || 0,
+          shell_color: ext.shell_color || '',
+          screen_spec: ext.screen_spec || '',
+          sensor: ext.sensor || '',
+          bracket: ext.bracket || '',
+          pan_spec: ext.pan_spec || '',
+          remark: ext.remark || ''
+        }))
+      : (detail.items || []).map((it, idx) => {
+          const ext = exts[idx] || {}
+          const prod = it.product_id ? productMap[it.product_id] : null
+          return {
+            idx,
+            product_id: it.product_id,
+            model: it.model,
+            supplier_model: prod ? (prod.our_model || '') : '',
+            qty: it.qty,
+            shell_color: ext.shell_color || '',
+            screen_spec: ext.screen_spec || '',
+            sensor: ext.sensor || '',
+            bracket: ext.bracket || '',
+            pan_spec: ext.pan_spec || '',
+            remark: ext.remark || ''
+          }
+        })
 
     editForm.value = {
       po_number: po.po_number || po.po_no || (refNo + '-POD'),
@@ -633,15 +672,37 @@ async function openEdit(row) {
   } catch { /* 拦截器 */ }
 }
 
+// 添加自定义明细行：型号/数量可编辑，扩展字段与普通行一致
+function addItemRow() {
+  editingItems.value.push({
+    idx: editingItems.value.length,
+    product_id: null,
+    model: '',
+    supplier_model: '',
+    qty: 0,
+    shell_color: '',
+    screen_spec: '',
+    sensor: '',
+    bracket: '',
+    pan_spec: '',
+    remark: '',
+    _custom: true
+  })
+}
+
 async function onSave() {
   if (!editForm.value.po_number) return ElMessage.warning('请填写采购订货单编号')
   if (!editForm.value.supplier_id) return ElMessage.warning('请选择供应商')
   if (!editForm.value.delivery_date) return ElMessage.warning('请选择交货日期')
+  if (!editingItems.value.length) return ElMessage.warning('产品明细至少保留一行')
 
   saving.value = true
   try {
-    // 明细行扩展字段按 index 顺序组装
+    // 明细行快照：含型号/数量（支持增删行），预览/打印与 Excel 下载按此快照渲染
     const item_extensions = editingItems.value.map(it => ({
+      model: it.model || '',
+      supplier_model: it.supplier_model || '',
+      qty: Number(it.qty) || 0,
       shell_color: it.shell_color,
       screen_spec: it.screen_spec,
       sensor: it.sensor,
@@ -687,6 +748,8 @@ onMounted(() => { loadList(); loadOptions() })
 .sub-text { font-size: 11px; color: #94a3b8; }
 .ref-type-tag { display: inline-block; margin-top: 2px; padding: 1px 6px; font-size: 10px; color: #fff; background: #0ea5e9; border-radius: 4px; }
 .quality-note-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: flex-start; }
+.ext-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+.ext-hint { font-size: 11px; color: #94a3b8; }
 
 .doc-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
 .doc-page { background: white; padding: 25px 30px; font-size: 11px; color: #0f172a; line-height: 1.5; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
