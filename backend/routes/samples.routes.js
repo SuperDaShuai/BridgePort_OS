@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../config/db');
-const { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership } = require('../utils/helpers');
+const { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership, addPlugPhotosToWorksheet } = require('../utils/helpers');
 const { generateDefaultDocuments } = require('../utils/documents');
 const { logOperation, ownerOf } = require('../utils/operation-log');
 const ExcelJS = require('exceljs');
@@ -123,7 +123,7 @@ router.get(
       params
     );
     const [rows] = await pool.query(
-      `SELECT s.*, c.name_en AS client_name, c.country AS country,
+      `SELECT s.*, c.name_en AS client_name, c.short_name AS client_short_name, c.country AS country,
               (SELECT COUNT(*) FROM sample_items si WHERE si.sample_id = s.id) AS item_count,
               (SELECT COALESCE(SUM(si.qty), 0) FROM sample_items si WHERE si.sample_id = s.id) AS total_qty,
               (SELECT GROUP_CONCAT(si.model SEPARATOR ', ') FROM sample_items si WHERE si.sample_id = s.id LIMIT 3) AS product_models
@@ -136,11 +136,17 @@ router.get(
   })
 );
 
-// 详情：主表 + 明细行
+// 详情：主表（含客户名称/简称）+ 明细行
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const [[sample]] = await pool.query('SELECT * FROM samples_tracking WHERE id = ?', [req.params.id]);
+    const [[sample]] = await pool.query(
+      `SELECT s.*, c.name_en AS client_name, c.short_name AS client_short_name
+       FROM samples_tracking s
+       LEFT JOIN clients c ON s.client_id = c.id
+       WHERE s.id = ?`,
+      [req.params.id]
+    );
     if (!sample) return res.fail('样品单不存在', 404);
     const denied = checkOwnership(sample, req, '样品单');
     if (denied) return res.fail(denied, 404);
@@ -370,7 +376,7 @@ router.get(
   '/:id/purchase-order-xlsx',
   asyncHandler(async (req, res) => {
     const [[sample]] = await pool.query(
-      `SELECT s.*, c.name_en AS client_name
+      `SELECT s.*, COALESCE(NULLIF(c.short_name, ''), c.name_en) AS client_name
        FROM samples_tracking s
        LEFT JOIN clients c ON s.client_id = c.id
        WHERE s.id = ?`,
@@ -490,6 +496,9 @@ router.get(
       ws.getCell(`H${row}`).value = r.pan_spec;
       ws.getCell(`I${row}`).value = r.remark;
     });
+
+    // ===== 三(附)、电源线/插头实物照片：A25 与 D25 合并为 A:I 整块并插入图片 =====
+    addPlugPhotosToWorksheet(ws, Array.isArray(po.plug_photos) ? po.plug_photos : []);
 
     // ===== 输出 .xlsx =====
     const filename = `PurchaseOrder_${sample.sample_number || 'export'}.xlsx`;

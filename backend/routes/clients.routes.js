@@ -5,7 +5,7 @@ const { ownerOf } = require('../utils/operation-log');
 
 const router = express.Router();
 
-const ALLOWED = ['name_en', 'country', 'destination_port', 'main_products', 'website_url', 'address_en'];
+const ALLOWED = ['name_en', 'short_name', 'country', 'destination_port', 'main_products', 'website_url', 'address_en'];
 
 // 同步联系人：先删后插（必须在事务内调用）
 async function syncContacts(conn, ownerId, contacts) {

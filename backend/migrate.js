@@ -937,6 +937,30 @@ const migrations = [
       await runSQL(conn, `ALTER TABLE suppliers
         ADD COLUMN credit_code VARCHAR(50) NULL DEFAULT NULL COMMENT '统一社会信用代码' AFTER name`);
     }
+  },
+  // ===== 037 · company_settings 新增 contract_seal_img（合同专用章图片）=====
+  {
+    id: '037',
+    desc: 'company_settings 新增 contract_seal_img 合同专用章图片字段',
+    async check(conn) {
+      return await columnExists(conn, 'company_settings', 'contract_seal_img');
+    },
+    async up(conn) {
+      await runSQL(conn, `ALTER TABLE company_settings
+        ADD COLUMN contract_seal_img MEDIUMTEXT NULL COMMENT '合同专用章图片（base64），用于购销合同顶部展示'`);
+    }
+  },
+  // ===== 038 · clients 新增 short_name（客户简称）=====
+  {
+    id: '038',
+    desc: 'clients 新增 short_name 客户简称字段，用于采购订货单等单据的客户名称',
+    async check(conn) {
+      return await columnExists(conn, 'clients', 'short_name');
+    },
+    async up(conn) {
+      await runSQL(conn, `ALTER TABLE clients
+        ADD COLUMN short_name VARCHAR(100) NULL DEFAULT NULL COMMENT '客户简称，用于采购订货单等单据' AFTER name_en`);
+    }
   }
 ];
 

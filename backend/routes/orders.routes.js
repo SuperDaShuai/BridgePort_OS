@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../config/db');
-const { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership } = require('../utils/helpers');
+const { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership, addPlugPhotosToWorksheet } = require('../utils/helpers');
 const { generateDefaultDocuments } = require('../utils/documents');
 const { logOperation, ownerOf } = require('../utils/operation-log');
 
@@ -127,7 +127,7 @@ router.get(
       params
     );
     const [rows] = await pool.query(
-      `SELECT o.*, c.name_en AS client_name, s.name AS supplier_name,
+      `SELECT o.*, c.name_en AS client_name, c.short_name AS client_short_name, c.country AS client_country, s.name AS supplier_name,
               (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) AS item_count,
               (SELECT COUNT(DISTINCT oi.product_id) FROM order_items oi WHERE oi.order_id = o.id) AS product_kind_count,
               (SELECT COALESCE(SUM(oi.qty), 0) FROM order_items oi WHERE oi.order_id = o.id) AS total_qty,
@@ -150,7 +150,7 @@ router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const [[order]] = await pool.query(
-      `SELECT o.*, c.name_en AS client_name, s.name AS supplier_name
+      `SELECT o.*, c.name_en AS client_name, c.short_name AS client_short_name, s.name AS supplier_name
        FROM orders o
        LEFT JOIN clients c ON o.client_id = c.id
        LEFT JOIN suppliers s ON o.supplier_id = s.id
@@ -189,7 +189,7 @@ router.get(
   '/:id/purchase-order-xlsx',
   asyncHandler(async (req, res) => {
     const [[order]] = await pool.query(
-      `SELECT o.*, c.name_en AS client_name, s.name AS supplier_name
+      `SELECT o.*, COALESCE(NULLIF(c.short_name, ''), c.name_en) AS client_name, s.name AS supplier_name
        FROM orders o
        LEFT JOIN clients c ON o.client_id = c.id
        LEFT JOIN suppliers s ON o.supplier_id = s.id
@@ -312,6 +312,9 @@ router.get(
       ws.getCell(`H${row}`).value = r.pan_spec;
       ws.getCell(`I${row}`).value = r.remark;
     });
+
+    // ===== 三(附)、电源线/插头实物照片：A25 与 D25 合并为 A:I 整块并插入图片 =====
+    addPlugPhotosToWorksheet(ws, Array.isArray(po.plug_photos) ? po.plug_photos : []);
 
     // ===== 输出 .xlsx =====
     const filename = `PurchaseOrder_${order.pi_number || 'export'}.xlsx`;

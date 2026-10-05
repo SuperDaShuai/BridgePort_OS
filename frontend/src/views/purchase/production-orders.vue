@@ -20,7 +20,7 @@
       </el-table-column>
       <el-table-column label="客户名称" min-width="180" show-overflow-tooltip>
         <template #default="{ row }">
-          {{ row.client_name || '—' }}
+          {{ clientNameWithCountry(row) }}
         </template>
       </el-table-column>
       <el-table-column label="供应商" min-width="200" show-overflow-tooltip>
@@ -162,7 +162,26 @@
           </el-col>
           <el-col :span="24">
             <el-form-item label="电源线及插头型号">
-              <el-input v-model="editForm.power_cord_spec" type="textarea" :rows="2" />
+              <el-input v-model="editForm.power_cord_spec" type="textarea" :rows="2" placeholder="无" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="电源线 / 插头实物照片（可多张，下载采购订货单 Excel 时自动插入照片区）">
+              <div class="plug-photos-wrap">
+                <div v-for="(p, i) in editForm.plug_photos" :key="i" class="plug-photo-thumb">
+                  <img :src="p" />
+                  <el-button class="plug-photo-del" link type="danger" :icon="Close" @click="editForm.plug_photos.splice(i, 1)" />
+                </div>
+                <el-upload
+                  v-if="editForm.plug_photos.length < 8"
+                  :show-file-list="false"
+                  :before-upload="onPlugPhotoSelect"
+                  accept="image/*"
+                  multiple
+                >
+                  <div class="plug-photo-add">＋ 上传照片</div>
+                </el-upload>
+              </div>
             </el-form-item>
           </el-col>
           <el-col :span="24">
@@ -172,7 +191,7 @@
           </el-col>
           <el-col :span="12">
             <el-form-item label="客户商标(LOGO)要求">
-              <el-input v-model="editForm.client_logo_req" type="textarea" :rows="2" />
+              <el-input v-model="editForm.client_logo_req" type="textarea" :rows="2" placeholder="无" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -277,7 +296,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Printer, Download } from '@element-plus/icons-vue'
+import { Printer, Download, Close } from '@element-plus/icons-vue'
 import { listOrders, getOrder, updateOrder } from '@/api/orders'
 import { listSamples, getSample, updateSample } from '@/api/samples'
 import { listSuppliers } from '@/api/suppliers'
@@ -293,7 +312,8 @@ const downloading = ref(false)
 
 // 4 个下拉选项常量（来自上传的 Excel 模板数据验证）
 const VOLTAGE_OPTIONS = [
-  '交流 220伏 (50/60赫兹)',
+  '交流 220伏 (50赫兹)',
+  '交流 220伏 (60赫兹)',
   '交流 110伏 (60赫兹)',
   '宽电压 交流 100-240伏',
   '直流 6伏 (适配器供电)',
@@ -311,6 +331,7 @@ const BATTERY_OPTIONS = [
   '6伏 / 4.0安时 蓄电池',
   '3.7伏 锂电池系统',
   '7.4伏 动力锂电池组',
+  '8000mA锂电池',
   '不配电池 (客户自配)'
 ]
 const PTC_OPTIONS = [
@@ -319,9 +340,9 @@ const PTC_OPTIONS = [
 ]
 
 // 默认文本（从模板示例值带出，用户可改）
-const POWER_CORD_DEFAULT = '国标两扁插 / 欧规两圆插，全长 1.5 米，纯铜线芯 2×0.75平方毫米，耐压 250伏，带3C/安全认证标识'
+const POWER_CORD_DEFAULT = '无'
 const PACKING_DEFAULT = '五层加厚定制彩盒 + 珍珠棉内衬 (5台/箱)，印刷客户指定LOGO与箱唛'
-const LOGO_REQ_DEFAULT = '按客户指定LOGO丝印(外壳/面贴/包装箱)'
+const LOGO_REQ_DEFAULT = '无'
 
 // 第四部分 6 条质量规范固定文本（来自 Excel 模板 A31-A36）
 // 质量要求默认值（未保存时用于初始化）
@@ -377,6 +398,14 @@ function supplierName(row) {
   return s ? s.name : ''
 }
 
+// 客户名称 + 所在国家（订单行 client_country，样品单行 country）
+function clientNameWithCountry(row) {
+  const name = row.client_short_name || row.client_name || ''
+  if (!name) return '—'
+  const country = row.client_country || row.country || ''
+  return country ? `${name}（${country}）` : name
+}
+
 /* ========== 数据加载（合并外销订单 + 样品单） ========== */
 async function loadList() {
   loading.value = true
@@ -408,6 +437,34 @@ async function loadOptions() {
     supplierOptions.value = s.list
     companySettings.value = co || {}
   } catch { /* 拦截器 */ }
+}
+
+// 电源线/插头实物照片：压缩至 800px 长边 JPEG base64（最多 8 张，随 production_order JSON 保存）
+function onPlugPhotoSelect(file) {
+  if (!Array.isArray(editForm.value.plug_photos)) editForm.value.plug_photos = []
+  if (editForm.value.plug_photos.length >= 8) {
+    ElMessage.warning('最多上传 8 张照片')
+    return false
+  }
+  const MAX_SIDE = 800
+  const reader = new FileReader()
+  reader.onload = (evt) => {
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(img.width * scale)
+      canvas.height = Math.round(img.height * scale)
+      const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#ffffff' // 透明底转 JPEG 时垫白，避免发黑
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      editForm.value.plug_photos.push(canvas.toDataURL('image/jpeg', 0.82))
+    }
+    img.src = evt.target.result
+  }
+  reader.readAsDataURL(file)
+  return false // 阻止 el-upload 自动上传
 }
 
 /* ========== 预览：生成采购订货单 HTML（复刻上传的 Excel 模板） ========== */
@@ -488,7 +545,9 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
   // ===== 三、电源线规格 =====
   const cordSection = `
     <div style="border:${BORDER}; border-top:none; padding:6px 10px; font-size:11px; background:#f8fafc;"><strong>电源线及插头型号：</strong>${po.power_cord_spec || ''}</div>
-    <div style="border:${BORDER}; border-top:none; padding:20px 10px; font-size:11px; color:#64748b; text-align:center; font-style:italic;">【 请在此处粘贴电源线 / 插头实物照片 】</div>
+    ${(Array.isArray(po.plug_photos) && po.plug_photos.length)
+      ? `<div style="border:${BORDER}; border-top:none; padding:8px; display:flex; flex-wrap:wrap; gap:8px; min-height:120px; align-items:center; justify-content:flex-start;">${po.plug_photos.map(p => `<img src="${p}" style="max-height:140px; max-width:220px; object-fit:contain;" />`).join('')}</div>`
+      : `<div style="border:${BORDER}; border-top:none; padding:20px 10px; font-size:11px; color:#64748b; text-align:center; font-style:italic;">【 请在此处粘贴电源线 / 插头实物照片 】</div>`}
   `
 
   // ===== 四、质量要求（已保存则用保存值，否则用默认） =====
@@ -505,7 +564,7 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
     <div style="text-align:center; font-size:18pt; font-weight:900; letter-spacing:8px; padding:14px 0; border-top:2px solid #0f172a; border-bottom:2px solid #0f172a; color:#0f172a;">采 购 订 货 单</div>
 
     <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0; font-size:11px; border-bottom:${BORDER};">
-      <div style="padding:8px 10px;"><strong>客户名称：</strong>${order.client_name || ''}</div>
+      <div style="padding:8px 10px;"><strong>客户名称：</strong>${order.client_short_name || order.client_name || ''}</div>
       <div style="padding:8px 10px;"><strong>订单编号：</strong>${po.po_number || ((order.ref_number || order.pi_number || '') + '-POD')}</div>
       <div style="padding:8px 10px;"><strong>制 单 人：</strong>${userStore.displayName}</div>
       <div style="padding:8px 10px;"><strong>下单日期：</strong>${orderDate}</div>
@@ -658,6 +717,7 @@ async function openEdit(row) {
       ptc_protection: po.ptc_protection || '',
       face_sticker_req: po.face_sticker_req || '',
       nameplate_seal_req: po.nameplate_seal_req || '',
+      plug_photos: Array.isArray(po.plug_photos) ? [...po.plug_photos] : [],
       power_cord_spec: po.power_cord_spec || POWER_CORD_DEFAULT,
       packing_desc: po.packing_desc || detail.packing_desc || PACKING_DEFAULT,
       client_logo_req: po.client_logo_req || LOGO_REQ_DEFAULT,
@@ -722,6 +782,7 @@ async function onSave() {
         ptc_protection: editForm.value.ptc_protection,
         face_sticker_req: editForm.value.face_sticker_req,
         nameplate_seal_req: editForm.value.nameplate_seal_req,
+        plug_photos: (editForm.value.plug_photos || []).filter((p) => typeof p === 'string' && p.startsWith('data:image')),
         power_cord_spec: editForm.value.power_cord_spec,
         packing_desc: editForm.value.packing_desc,
         client_logo_req: editForm.value.client_logo_req,
@@ -745,6 +806,13 @@ onMounted(() => { loadList(); loadOptions() })
 <style scoped>
 .page-header { margin-bottom: 14px; }
 .page-title { font-size: 18px; font-weight: 700; color: #0f172a; margin: 0; }
+/* 电源线/插头实物照片上传 */
+.plug-photos-wrap { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.plug-photo-thumb { position: relative; width: 88px; height: 88px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; background: #f8fafc; }
+.plug-photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.plug-photo-del { position: absolute; top: 0; right: 0; background: rgba(255, 255, 255, 0.9); border-radius: 0 0 0 6px; }
+.plug-photo-add { width: 88px; height: 88px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #64748b; border: 1px dashed #cbd5e1; border-radius: 6px; cursor: pointer; background: #f8fafc; }
+.plug-photo-add:hover { border-color: #f59e0b; color: #f59e0b; }
 .sub-text { font-size: 11px; color: #94a3b8; }
 .ref-type-tag { display: inline-block; margin-top: 2px; padding: 1px 6px; font-size: 10px; color: #fff; background: #0ea5e9; border-radius: 4px; }
 .quality-note-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: flex-start; }

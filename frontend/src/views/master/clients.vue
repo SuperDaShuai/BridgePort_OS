@@ -19,6 +19,9 @@
     <!-- 列表 -->
     <el-table v-loading="loading" :data="list" border stripe>
       <el-table-column prop="name_en" label="客户英文名" min-width="230" show-overflow-tooltip />
+      <el-table-column prop="short_name" label="客户简称" width="150" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.short_name || '—' }}</template>
+      </el-table-column>
       <el-table-column prop="country" label="国家/地区" width="150" show-overflow-tooltip />
       <el-table-column prop="destination_port" label="目的港" width="140" show-overflow-tooltip />
       <el-table-column prop="main_products" label="主营产品" min-width="150" show-overflow-tooltip />
@@ -55,6 +58,11 @@
           <el-col :span="12">
             <el-form-item label="英文名称" prop="name_en">
               <el-input v-model="form.name_en" placeholder="GLOBAL ... LLC" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="客户简称">
+              <el-input v-model="form.short_name" placeholder="用于采购订货单等单据的客户简称" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -125,7 +133,7 @@ const rules = {
 }
 
 const blankForm = () => ({
-  name_en: '', country: '', destination_port: '', main_products: '',
+  name_en: '', short_name: '', country: '', destination_port: '', main_products: '',
   website_url: '', address_en: '', contacts: []
 })
 
