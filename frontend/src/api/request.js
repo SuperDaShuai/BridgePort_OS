@@ -19,6 +19,11 @@ request.interceptors.response.use(
     const res = response.data
     // 登录过期/未登录：清理本地凭证并跳转登录页
     if (res.code === 401) {
+      // 登录接口本身的 401：账号或密码错误，仅提示，不清理凭证不跳转
+      if (String(response.config.url || '').includes('/auth/login')) {
+        ElMessage.error(res.msg || '用户名或密码错误')
+        return Promise.reject(new Error(res.msg || '用户名或密码错误'))
+      }
       localStorage.removeItem('bp_token')
       localStorage.removeItem('bp_profile')
       if (window.location.pathname !== '/login') {

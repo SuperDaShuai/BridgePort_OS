@@ -22,6 +22,9 @@
       <el-table-column prop="short_name" label="客户简称" width="150" show-overflow-tooltip>
         <template #default="{ row }">{{ row.short_name || '—' }}</template>
       </el-table-column>
+      <el-table-column label="负责人" width="110" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.owner_name || '—' }}</template>
+      </el-table-column>
       <el-table-column prop="country" label="国家/地区" width="150" show-overflow-tooltip />
       <el-table-column prop="destination_port" label="目的港" width="140" show-overflow-tooltip />
       <el-table-column prop="main_products" label="主营产品" min-width="150" show-overflow-tooltip />

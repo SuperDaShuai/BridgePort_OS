@@ -375,6 +375,8 @@ router.delete(
 router.get(
   '/:id/purchase-order-xlsx',
   asyncHandler(async (req, res) => {
+    // 业务员(3)只读：不可下载采购订货单 Excel
+    if (req.operator.permission_level === 3) return res.fail('业务员无权下载采购订货单 Excel', 403);
     const [[sample]] = await pool.query(
       `SELECT s.*, COALESCE(NULLIF(c.short_name, ''), c.name_en) AS client_name
        FROM samples_tracking s
@@ -453,8 +455,10 @@ router.get(
 
     // ===== 三、电源线规格 =====
     ws.getCell('C24').value = po.power_cord_spec || '';
+    // 备注栏（模板第30行，质量要求区上方）
+    ws.getCell('C30').value = po.remark_note || '';
 
-    // ===== 四、质量要求与补充说明（C31-C36，从 production_order.quality_notes 读取） =====
+    // ===== 四、质量要求与补充说明（C32-C37，从 production_order.quality_notes 读取） =====
     const DEFAULT_QUALITY_NOTES = [
       '面贴、外壳铭牌及彩盒/外箱所印客户LOGO必须严格按照确认矢量图档执行，确保字迹清晰、色号准确、无重影毛刺；',
       '工作电压、充电模式、电池规格、PTC保护等核心电气参数必须严格按本订单货单第二区块配置执行，出厂前每台需进行 100% 满负荷老化与连续通电测试 ≥ 24 小时；',
@@ -467,7 +471,7 @@ router.get(
       ? po.quality_notes
       : DEFAULT_QUALITY_NOTES.map((c) => ({ title: '', content: c }));
     for (let i = 0; i < 6; i++) {
-      const cellRef = `C${31 + i}`;
+      const cellRef = `C${32 + i}`;
       const item = qualityNotes[i] || { content: '' };
       ws.getCell(cellRef).value = item.content || DEFAULT_QUALITY_NOTES[i] || '';
     }

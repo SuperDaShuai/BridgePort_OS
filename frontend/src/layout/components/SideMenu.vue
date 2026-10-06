@@ -39,7 +39,7 @@
         <el-menu-item index="/samples">样品管理 (Samples)</el-menu-item>
         <el-menu-item index="/orders">外销订单 (Proforma Invoice)</el-menu-item>
         <el-menu-item v-if="userStore.canSee([1, 2, 4, 5])" index="/purchase/contracts">购销合同</el-menu-item>
-        <el-menu-item v-if="userStore.canSee([1, 2, 5])" index="/purchase/production-orders">生产任务单 (PO)</el-menu-item>
+        <el-menu-item v-if="userStore.canSee([1, 2, 3, 5])" index="/purchase/production-orders">生产任务单 (PO)</el-menu-item>
         <el-menu-item v-if="userStore.canSee([1, 2, 5])" index="/shipping">订舱委托书 (Shipping Order)</el-menu-item>
         <el-menu-item v-if="userStore.canSee([1, 2, 5])" index="/customs/customs-declaration">出口报关单要素</el-menu-item>
         <el-menu-item index="/customs/clearance-docs">目的港清关资料</el-menu-item>

@@ -66,7 +66,7 @@ const routes = [
         path: 'purchase/production-orders',
         name: 'ProductionOrders',
         component: () => import('@/views/purchase/production-orders.vue'),
-        meta: { title: '生产任务单 (PO)', permission: [1, 2, 5] }
+        meta: { title: '生产任务单 (PO)', permission: [1, 2, 3, 5] }
       },
       // ── 物流与品控 ──
       {

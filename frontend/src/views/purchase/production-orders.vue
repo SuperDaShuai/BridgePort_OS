@@ -62,7 +62,7 @@
       class="doc-dialog"
     >
       <div class="doc-toolbar no-print">
-        <el-button type="success" :icon="Download" :loading="downloading" @click="onExportExcel">下载 Excel (.xlsx 模板版)</el-button>
+        <el-button v-if="canMaintain" type="success" :icon="Download" :loading="downloading" @click="onExportExcel">下载 Excel (.xlsx 模板版)</el-button>
         <el-button type="warning" :icon="Printer" @click="onPrint">打印 / 另存为 PDF</el-button>
       </div>
 
@@ -204,6 +204,11 @@
               <el-input v-model="editForm.mark_req" type="textarea" :rows="2" />
             </el-form-item>
           </el-col>
+          <el-col :span="24">
+            <el-form-item label="备注（显示于采购订货单第三区块底部、质量要求上方）">
+              <el-input v-model="editForm.remark_note" type="textarea" :rows="2" />
+            </el-form-item>
+          </el-col>
         </el-row>
 
         <!-- 分区 4：明细行扩展字段（支持添加/删除明细行，保存后同步至预览打印与 Excel 下载） -->
@@ -306,8 +311,8 @@ import { formatMoney, getOrderTotals, printDocument } from '@/utils/docUtils'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
-// 任务单维护权限：跟单(5)可编辑，业务员(3)只读
-const canMaintain = userStore.permissionLevel <= 5
+// 任务单维护权限：跟单(5)/主管(2)/管理员(1)可编辑，业务员(3)只读（仅查看自己的任务单，不可编辑、不可下载 Excel）
+const canMaintain = userStore.permissionLevel <= 5 && userStore.permissionLevel !== 3
 const downloading = ref(false)
 
 // 4 个下拉选项常量（来自上传的 Excel 模板数据验证）
@@ -548,6 +553,7 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
     ${(Array.isArray(po.plug_photos) && po.plug_photos.length)
       ? `<div style="border:${BORDER}; border-top:none; padding:8px; display:flex; flex-wrap:wrap; gap:8px; min-height:120px; align-items:center; justify-content:flex-start;">${po.plug_photos.map(p => `<img src="${p}" style="max-height:140px; max-width:220px; object-fit:contain;" />`).join('')}</div>`
       : `<div style="border:${BORDER}; border-top:none; padding:20px 10px; font-size:11px; color:#64748b; text-align:center; font-style:italic;">【 请在此处粘贴电源线 / 插头实物照片 】</div>`}
+    <div style="border:${BORDER}; border-top:none; padding:6px 10px; font-size:11px; background:#f8fafc;"><strong>备注：</strong>${po.remark_note || ''}</div>
   `
 
   // ===== 四、质量要求（已保存则用保存值，否则用默认） =====
@@ -722,7 +728,8 @@ async function openEdit(row) {
       packing_desc: po.packing_desc || detail.packing_desc || PACKING_DEFAULT,
       client_logo_req: po.client_logo_req || LOGO_REQ_DEFAULT,
       tech_req: po.tech_req || '',
-      mark_req: po.mark_req || ''
+      mark_req: po.mark_req || '',
+      remark_note: po.remark_note || ''
     }
     // 质量要求与补充说明：已保存则加载，未保存则用默认值
     editQualityNotes.value = Array.isArray(po.quality_notes) && po.quality_notes.length
@@ -788,6 +795,7 @@ async function onSave() {
         client_logo_req: editForm.value.client_logo_req,
         tech_req: editForm.value.tech_req,
         mark_req: editForm.value.mark_req,
+        remark_note: editForm.value.remark_note,
         quality_notes: editQualityNotes.value.map(q => ({ title: q.title || '', content: q.content || '' })),
         item_extensions
       },
