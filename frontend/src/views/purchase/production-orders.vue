@@ -109,6 +109,79 @@
           </el-col>
         </el-row>
 
+        <!-- 分区 1（续）：产品明细扩展字段（支持添加/删除明细行，保存后同步至预览打印与 Excel 下载） -->
+        <div class="ext-toolbar">
+          <el-button type="primary" size="small" @click="addItemRow">+ 添加明细行</el-button>
+          <span class="ext-hint">可添加自定义行或删除不需要的行，保存后预览/打印与 Excel 下载同步生效</span>
+        </div>
+        <el-table :data="editingItems" border size="small" style="width: 100%">
+          <el-table-column label="序号" width="50" align="center" type="index" />
+          <el-table-column label="产品型号（供应商）" width="150">
+            <template #default="{ row }">
+              <el-input v-if="row._custom" v-model="row.model" size="small" placeholder="输入自定义型号" />
+              <template v-else>
+                <strong>{{ row.supplier_model || row.model || '—' }}</strong>
+                <div v-if="row.supplier_model && row.model" style="font-size:10px; color:#94a3b8; margin-top:2px;">自编号: {{ row.model }}</div>
+              </template>
+            </template>
+          </el-table-column>
+          <el-table-column label="图片" width="70" align="center">
+            <template #default="{ row }">
+              <el-image
+                v-if="row.img_url"
+                :src="row.img_url"
+                fit="cover"
+                :preview-src-list="[row.img_url]"
+                preview-teleported
+                hide-on-click-modal
+                style="width:40px; height:40px; border-radius:4px; display:block; margin:0 auto;"
+              />
+              <span v-else style="color:#cbd5e1;">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="数量" width="90" align="right">
+            <template #default="{ row }">
+              <el-input-number v-if="row._custom" v-model="row.qty" size="small" :min="0" :controls="false" style="width: 100%" />
+              <template v-else>{{ row.qty }}</template>
+            </template>
+          </el-table-column>
+          <el-table-column label="外壳颜色" width="100">
+            <template #default="{ row }">
+              <el-input v-model="row.shell_color" size="small" placeholder="如:曜石黑" />
+            </template>
+          </el-table-column>
+          <el-table-column label="显示屏规格" width="120">
+            <template #default="{ row }">
+              <el-input v-model="row.screen_spec" size="small" placeholder="如:双显LCD" />
+            </template>
+          </el-table-column>
+          <el-table-column label="传感器" width="120">
+            <template #default="{ row }">
+              <el-input v-model="row.sensor" size="small" />
+            </template>
+          </el-table-column>
+          <el-table-column label="支架" width="100">
+            <template #default="{ row }">
+              <el-input v-model="row.bracket" size="small" />
+            </template>
+          </el-table-column>
+          <el-table-column label="秤盘规格" width="110">
+            <template #default="{ row }">
+              <el-input v-model="row.pan_spec" size="small" />
+            </template>
+          </el-table-column>
+          <el-table-column label="备注 / 特殊要求" min-width="150">
+            <template #default="{ row }">
+              <el-input v-model="row.remark" size="small" />
+            </template>
+          </el-table-column>
+          <el-table-column label="删" width="50" align="center">
+            <template #default="{ $index }">
+              <el-button link type="danger" @click="editingItems.splice($index, 1)">✕</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
         <!-- 分区 2：核心电气配置 -->
         <el-divider content-position="left">二、核心电气、传感器与部件配置</el-divider>
         <el-row :gutter="16">
@@ -186,7 +259,7 @@
           </el-col>
           <el-col :span="24">
             <el-form-item label="包装说明">
-              <el-input v-model="editForm.packing_desc" type="textarea" :rows="2" />
+              <el-input v-model="editForm.packing_desc" type="textarea" :rows="2" placeholder="无" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -204,90 +277,13 @@
               <el-input v-model="editForm.mark_req" type="textarea" :rows="2" />
             </el-form-item>
           </el-col>
-          <el-col :span="24">
-            <el-form-item label="备注（显示于采购订货单第三区块底部、质量要求上方）">
-              <el-input v-model="editForm.remark_note" type="textarea" :rows="2" />
-            </el-form-item>
-          </el-col>
         </el-row>
 
-        <!-- 分区 4：明细行扩展字段（支持添加/删除明细行，保存后同步至预览打印与 Excel 下载） -->
-        <el-divider content-position="left">四、产品明细扩展字段（外壳颜色 / 显示屏规格 / 传感器 / 支架 / 秤盘规格 / 备注）</el-divider>
-        <div class="ext-toolbar">
-          <el-button type="primary" size="small" @click="addItemRow">+ 添加明细行</el-button>
-          <span class="ext-hint">可添加自定义行或删除不需要的行，保存后预览/打印与 Excel 下载同步生效</span>
-        </div>
-        <el-table :data="editingItems" border size="small" style="width: 100%">
-          <el-table-column label="序号" width="50" align="center" type="index" />
-          <el-table-column label="产品型号（供应商）" width="150">
-            <template #default="{ row }">
-              <el-input v-if="row._custom" v-model="row.model" size="small" placeholder="输入自定义型号" />
-              <template v-else>
-                <strong>{{ row.supplier_model || row.model || '—' }}</strong>
-                <div v-if="row.supplier_model && row.model" style="font-size:10px; color:#94a3b8; margin-top:2px;">自编号: {{ row.model }}</div>
-              </template>
-            </template>
-          </el-table-column>
-          <el-table-column label="数量" width="90" align="right">
-            <template #default="{ row }">
-              <el-input-number v-if="row._custom" v-model="row.qty" size="small" :min="0" :controls="false" style="width: 100%" />
-              <template v-else>{{ row.qty }}</template>
-            </template>
-          </el-table-column>
-          <el-table-column label="外壳颜色" width="100">
-            <template #default="{ row }">
-              <el-input v-model="row.shell_color" size="small" placeholder="如:曜石黑" />
-            </template>
-          </el-table-column>
-          <el-table-column label="显示屏规格" width="120">
-            <template #default="{ row }">
-              <el-input v-model="row.screen_spec" size="small" placeholder="如:双显LCD" />
-            </template>
-          </el-table-column>
-          <el-table-column label="传感器" width="120">
-            <template #default="{ row }">
-              <el-input v-model="row.sensor" size="small" />
-            </template>
-          </el-table-column>
-          <el-table-column label="支架" width="100">
-            <template #default="{ row }">
-              <el-input v-model="row.bracket" size="small" />
-            </template>
-          </el-table-column>
-          <el-table-column label="秤盘规格" width="110">
-            <template #default="{ row }">
-              <el-input v-model="row.pan_spec" size="small" />
-            </template>
-          </el-table-column>
-          <el-table-column label="备注 / 特殊要求" min-width="150">
-            <template #default="{ row }">
-              <el-input v-model="row.remark" size="small" />
-            </template>
-          </el-table-column>
-          <el-table-column label="删" width="50" align="center">
-            <template #default="{ $index }">
-              <el-button link type="danger" @click="editingItems.splice($index, 1)">✕</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-
-        <!-- 分区 5：质量要求与补充说明（6 项可编辑） -->
-        <el-divider content-position="left">五、质量要求与补充说明</el-divider>
-        <div v-for="(item, idx) in editQualityNotes" :key="idx" class="quality-note-row">
-          <el-input
-            v-model="item.title"
-            size="small"
-            style="width: 220px; flex-shrink: 0;"
-            :placeholder="`标题 ${idx + 1}`"
-          />
-          <el-input
-            v-model="item.content"
-            type="textarea"
-            :rows="2"
-            style="flex: 1;"
-            :placeholder="`第 ${idx + 1} 项内容`"
-          />
-        </div>
+        <!-- 分区 4：其他备注（显示于采购订货单「四、其他备注」区块） -->
+        <el-divider content-position="left">四、其他备注</el-divider>
+        <el-form-item label="其他备注">
+          <el-input v-model="editForm.remark_note" type="textarea" :rows="2" placeholder="无" />
+        </el-form-item>
       </el-form>
 
       <template #footer>
@@ -346,21 +342,8 @@ const PTC_OPTIONS = [
 
 // 默认文本（从模板示例值带出，用户可改）
 const POWER_CORD_DEFAULT = '无'
-const PACKING_DEFAULT = '五层加厚定制彩盒 + 珍珠棉内衬 (5台/箱)，印刷客户指定LOGO与箱唛'
+const PACKING_DEFAULT = '无'
 const LOGO_REQ_DEFAULT = '无'
-
-// 第四部分 6 条质量规范固定文本（来自 Excel 模板 A31-A36）
-// 质量要求默认值（未保存时用于初始化）
-function defaultQualityNotes() {
-  return [
-    { title: '1. 客户商标规范：', content: '面贴、外壳铭牌及彩盒/外箱所印客户LOGO必须严格按照确认矢量图档执行，确保字迹清晰、色号准确、无重影毛刺；' },
-    { title: '2. 电压与电气规范：', content: '工作电压、充电模式、电池规格、PTC保护等核心电气参数必须严格按本订单货单第二区块配置执行，出厂前每台需进行 100% 满负荷老化与连续通电测试 ≥ 24 小时；' },
-    { title: '3. 结构与密封要求：', content: '整机结构密封严格，主板做加厚防潮三防漆喷涂，按键手感灵敏，传感器经四角偏差及线性度校准；' },
-    { title: '4. 电池安全规范：', content: '必须使用带PTC保护板电池，出厂前每台需进行 100% 满负荷老化与连续通电测试 ≥ 24 小时；' },
-    { title: '5. 随箱配件清单：', content: '每台包含主秤 1 台、不锈钢秤盘 1 块、标配电源线 1 条、中文说明书 1 份、合格证/保修卡 1 份、高透防尘罩 1 个；' },
-    { title: '6. 包装与唛头标识：', content: '外箱清晰印制客户LOGO、产品型号、额定电压、净重/毛重、箱规尺寸及生产批次号，严禁混装。' }
-  ]
-}
 
 const loading = ref(false)
 const saving = ref(false)
@@ -380,7 +363,6 @@ const editForm = ref({})
 const editingOrderId = ref(null)
 const editingRefType = ref('order')
 const editingItems = ref([])
-const editQualityNotes = ref(defaultQualityNotes())
 
 /* ========== 工具：JSON 字段兼容解析（对象/字符串/null） ========== */
 function parseDoc(val) {
@@ -501,10 +483,10 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
   // 行源：item_extensions 已保存行快照（含 model，支持增删行）时用快照；否则按订单明细+扩展对齐
   const hasSnapshot = exts.length > 0 && exts[0].model !== undefined
   const rows = hasSnapshot
-    ? exts.map((e) => ({ model: e.supplier_model || e.model || '', qty: Number(e.qty) || 0, ext: e }))
+    ? exts.map((e) => ({ model: e.supplier_model || e.model || '', qty: Number(e.qty) || 0, img_url: e.img_url || '', ext: e }))
     : items.map((it, idx) => {
         const prod = it.product_id ? productMap[it.product_id] : null
-        return { model: (prod && prod.our_model) || it.model || '', qty: it.qty || 0, ext: exts[idx] || {} }
+        return { model: (prod && prod.our_model) || it.model || '', qty: it.qty || 0, img_url: it.img_url || (prod ? (prod.img_url || '') : ''), ext: exts[idx] || {} }
       })
   const totalQty = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0)
 
@@ -520,6 +502,7 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
     return `<tr>
       <td style="${cellStyle} text-align:center;">${idx + 1}</td>
       <td style="${cellStyle}"><strong>${r.model}</strong></td>
+      <td style="${cellStyle} text-align:center;">${r.img_url ? `<img src="${r.img_url}" style="width:36px; height:36px; object-fit:cover; border-radius:3px; display:block; margin:0 auto;" />` : '—'}</td>
       <td style="${cellStyle} text-align:right;">${r.qty || 0}</td>
       <td style="${cellStyle}">${ext.shell_color || ''}</td>
       <td style="${cellStyle}">${ext.screen_spec || ''}</td>
@@ -542,7 +525,7 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
       <div style="border:${BORDER}; border-right:none; border-top:none; padding:6px 10px; background:#f8fafc;"><strong>面贴要求：</strong>${po.face_sticker_req || ''}</div>
       <div style="border:${BORDER}; border-top:none; padding:6px 10px; background:#f8fafc;"><strong>铭牌/铅封/说明书：</strong>${po.nameplate_seal_req || ''}</div>
     </div>
-    <div style="border:${BORDER}; border-top:none; padding:6px 10px; font-size:11px; background:#f8fafc;"><strong>包装说明：</strong>${po.packing_desc || ''}</div>
+    <div style="border:${BORDER}; border-top:none; padding:6px 10px; font-size:11px; background:#f8fafc;"><strong>包装说明：</strong>${po.packing_desc || '无'}</div>
     <div style="border:${BORDER}; border-top:none; padding:6px 10px; font-size:11px; background:#f8fafc;"><strong>装配生产工艺要求：</strong>${po.tech_req || ''}</div>
     <div style="border:${BORDER}; border-top:none; padding:6px 10px; font-size:11px; background:#f8fafc;"><strong>包装唛头要求：</strong>${po.mark_req || ''}</div>
   `
@@ -553,18 +536,7 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
     ${(Array.isArray(po.plug_photos) && po.plug_photos.length)
       ? `<div style="border:${BORDER}; border-top:none; padding:8px; display:flex; flex-wrap:wrap; gap:8px; min-height:120px; align-items:center; justify-content:flex-start;">${po.plug_photos.map(p => `<img src="${p}" style="max-height:140px; max-width:220px; object-fit:contain;" />`).join('')}</div>`
       : `<div style="border:${BORDER}; border-top:none; padding:20px 10px; font-size:11px; color:#64748b; text-align:center; font-style:italic;">【 请在此处粘贴电源线 / 插头实物照片 】</div>`}
-    <div style="border:${BORDER}; border-top:none; padding:6px 10px; font-size:11px; background:#f8fafc;"><strong>备注：</strong>${po.remark_note || ''}</div>
   `
-
-  // ===== 四、质量要求（已保存则用保存值，否则用默认） =====
-  const qualityNotes = Array.isArray(po.quality_notes) && po.quality_notes.length
-    ? po.quality_notes
-    : defaultQualityNotes()
-  const qualityRows = qualityNotes.map(q => `
-    <div style="border:${BORDER}; border-top:none; padding:6px 10px; font-size:11px;">
-      <strong>${q.title}</strong>${q.content}
-    </div>
-  `).join('')
 
   return `
     <div style="text-align:center; font-size:18pt; font-weight:900; letter-spacing:8px; padding:14px 0; border-top:2px solid #0f172a; border-bottom:2px solid #0f172a; color:#0f172a;">采 购 订 货 单</div>
@@ -584,6 +556,7 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
         <thead><tr>
           <th style="${headStyle} width:40px;">序号</th>
           <th style="${headStyle} width:110px;">产品型号</th>
+          <th style="${headStyle} width:60px;">图片</th>
           <th style="${headStyle} width:70px;">数量(台)</th>
           <th style="${headStyle}">外壳颜色</th>
           <th style="${headStyle}">显示屏规格</th>
@@ -592,11 +565,11 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
           <th style="${headStyle}">秤盘规格</th>
           <th style="${headStyle}">备注/特殊要求</th>
         </tr></thead>
-        <tbody>${detailRows || `<tr><td colspan="9" style="${cellStyle} text-align:center; color:#94a3b8;">暂无明细</td></tr>`}</tbody>
+        <tbody>${detailRows || `<tr><td colspan="10" style="${cellStyle} text-align:center; color:#94a3b8;">暂无明细</td></tr>`}</tbody>
         <tfoot><tr>
-          <td style="${cellStyle} text-align:right;" colspan="2"><strong>合计总数量：</strong></td>
+          <td style="${cellStyle} text-align:right;" colspan="3"><strong>合计总数量：</strong></td>
           <td style="${cellStyle} text-align:right;"><strong>${totalQty}</strong></td>
-          <td style="${cellStyle}" colspan="6"><em>总计台数请核对装箱数与整批出货体积</em></td>
+          <td style="${cellStyle}" colspan="7"><em>总计台数请核对装箱数与整批出货体积</em></td>
         </tr></tfoot>
       </table>
     </div>
@@ -612,8 +585,8 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}) {
     </div>
 
     <div style="margin-top:8px; border:${BORDER}; border-top:none;">
-      <div style="${HEAD_BG} padding:6px 10px; font-weight:bold; font-size:11px; border-bottom:${BORDER};">四、 质量要求与补充说明</div>
-      ${qualityRows}
+      <div style="${HEAD_BG} padding:6px 10px; font-weight:bold; font-size:11px; border-bottom:${BORDER};">四、 其他备注</div>
+      <div style="border:${BORDER}; border-top:none; padding:6px 10px; font-size:11px; background:#f8fafc;"><strong>备注：</strong>${po.remark_note || '无'}</div>
     </div>
   `
 }
@@ -680,13 +653,23 @@ async function openEdit(row) {
       const pd = await listProducts({ page: 1, pageSize: 500 })
       productMap = Object.fromEntries((pd.list || []).map(p => [p.id, p]))
     } catch { /* 产品映射失败时回退自编号 */ }
+    // 快照行取图：优先快照自带 img_url，其次按快照 product_id / 型号匹配产品库图片
+    const snapshotImg = (ext) => {
+      if (ext.img_url) return ext.img_url
+      if (ext.product_id && productMap[ext.product_id]) return productMap[ext.product_id].img_url || ''
+      const m = ext.supplier_model || ext.model || ''
+      if (!m) return ''
+      const hit = Object.values(productMap).find((p) => (p.our_model && p.our_model === m) || p.model === m)
+      return hit ? (hit.img_url || '') : ''
+    }
     editingItems.value = hasSnapshot
       ? exts.map((ext, idx) => ({
           idx,
-          product_id: null,
+          product_id: ext.product_id || null,
           model: ext.model || '',
           supplier_model: ext.supplier_model || '',
           qty: Number(ext.qty) || 0,
+          img_url: snapshotImg(ext),
           shell_color: ext.shell_color || '',
           screen_spec: ext.screen_spec || '',
           sensor: ext.sensor || '',
@@ -703,6 +686,7 @@ async function openEdit(row) {
             model: it.model,
             supplier_model: prod ? (prod.our_model || '') : '',
             qty: it.qty,
+            img_url: it.img_url || (prod ? (prod.img_url || '') : ''),
             shell_color: ext.shell_color || '',
             screen_spec: ext.screen_spec || '',
             sensor: ext.sensor || '',
@@ -731,10 +715,6 @@ async function openEdit(row) {
       mark_req: po.mark_req || '',
       remark_note: po.remark_note || ''
     }
-    // 质量要求与补充说明：已保存则加载，未保存则用默认值
-    editQualityNotes.value = Array.isArray(po.quality_notes) && po.quality_notes.length
-      ? po.quality_notes.map(q => ({ ...q }))
-      : defaultQualityNotes()
     editVisible.value = true
   } catch { /* 拦截器 */ }
 }
@@ -747,6 +727,7 @@ function addItemRow() {
     model: '',
     supplier_model: '',
     qty: 0,
+    img_url: '',
     shell_color: '',
     screen_spec: '',
     sensor: '',
@@ -767,9 +748,11 @@ async function onSave() {
   try {
     // 明细行快照：含型号/数量（支持增删行），预览/打印与 Excel 下载按此快照渲染
     const item_extensions = editingItems.value.map(it => ({
+      product_id: it.product_id || null,
       model: it.model || '',
       supplier_model: it.supplier_model || '',
       qty: Number(it.qty) || 0,
+      img_url: typeof it.img_url === 'string' && it.img_url.startsWith('data:image') ? it.img_url : '',
       shell_color: it.shell_color,
       screen_spec: it.screen_spec,
       sensor: it.sensor,
@@ -796,7 +779,6 @@ async function onSave() {
         tech_req: editForm.value.tech_req,
         mark_req: editForm.value.mark_req,
         remark_note: editForm.value.remark_note,
-        quality_notes: editQualityNotes.value.map(q => ({ title: q.title || '', content: q.content || '' })),
         item_extensions
       },
       delivery_date: editForm.value.delivery_date
@@ -823,7 +805,6 @@ onMounted(() => { loadList(); loadOptions() })
 .plug-photo-add:hover { border-color: #f59e0b; color: #f59e0b; }
 .sub-text { font-size: 11px; color: #94a3b8; }
 .ref-type-tag { display: inline-block; margin-top: 2px; padding: 1px 6px; font-size: 10px; color: #fff; background: #0ea5e9; border-radius: 4px; }
-.quality-note-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: flex-start; }
 .ext-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
 .ext-hint { font-size: 11px; color: #94a3b8; }
 

@@ -32,13 +32,13 @@ function checkOwnership(row, req, label) {
 }
 
 /* ================== 采购订货单 Excel：电源线/插头实物照片插入 ==================
-   模板照片区为 A25:C29 + D25:I29 两个合并块（占位文字在 A25）。
-   本函数把两块合并为 A{ph}:I{ph+4} 整块，并把 base64 实物照片按原始比例插入该区域。
+   模板照片区为 A25:C29 + E25:J29 两个合并块（占位文字在 A25）。
+   本函数把两块合并为 A{ph}:J{ph+4} 整块，并把 base64 实物照片按原始比例插入该区域。
    注意：ExcelJS insertRow 不会移动合并单元格，因此照片区必须按占位文字动态定位，
    并同时清理「目标范围」与「模板原范围」内残留的旧合并定义。 */
 const PO_PHOTO_AREA_ROWS = 5;  // 照片区占 5 行
 const PO_PHOTO_BASE_ROW = 25;  // 模板照片区起始行（未插行时）
-const PO_PHOTO_COL_PX = [36.5, 90.75, 93.38, 82.88, 92.5, 78.5, 60.13, 130.13, 130.13]; // A-I 列像素宽
+const PO_PHOTO_COL_PX = [36.5, 90.75, 93.38, 93.38, 82.88, 92.5, 78.5, 60.13, 130.13, 130.13]; // A-J 列像素宽
 const PHOTO_SLOT_W = 165;      // 单个横向槽位宽（含间距）
 const PHOTO_BOX_W = 150;       // 单张图最大宽
 const PHOTO_BOX_H = 115;       // 单张图最大高
@@ -91,14 +91,14 @@ function addPlugPhotosToWorksheet(ws, photos) {
   }
   for (const master of staleMerges) delete ws._merges[master];
   for (let r = phRow; r <= lastRow; r++) {
-    for (let c = 1; c <= 9; c++) {
+    for (let c = 1; c <= 10; c++) {
       const cell = ws.getRow(r).getCell(c);
       try { cell.unmerge(); } catch { /* 未合并单元格忽略 */ }
     }
   }
 
-  // 2) 合并为整块 A{ph}:I{last}
-  ws.mergeCells(`A${phRow}:I${lastRow}`);
+  // 2) 合并为整块 A{ph}:J{last}
+  ws.mergeCells(`A${phRow}:J${lastRow}`);
 
   const list = (photos || []).filter(
     (p) => typeof p === 'string' && /^data:image\/(png|jpe?g);base64,/.test(p)
@@ -150,4 +150,31 @@ function addPlugPhotosToWorksheet(ws, photos) {
   }
 }
 
-module.exports = { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership, addPlugPhotosToWorksheet };
+module.exports = { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership, addPlugPhotosToWorksheet, addDetailThumbToWorksheet, clearUnusedDetailRows };
+
+/* ================== 采购订货单 Excel：明细行产品缩略图 ==================
+   模板明细区 C 列为「图片」列，每行产品图片以 44x44 嵌入。
+   配套要求：明细行行高需设为 36pt（约48px），图片在本行内垂直居中，多行不重叠。 */
+function addDetailThumbToWorksheet(ws, rowNo, dataUrl) {
+  if (typeof dataUrl !== 'string' || !/^data:image\/(png|jpe?g);base64,/.test(dataUrl)) return;
+  try {
+    const ext = dataUrl.startsWith('data:image/png') ? 'png' : 'jpeg';
+    const base64 = dataUrl.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
+    const imgId = ws.workbook.addImage({ base64, extension: ext });
+    ws.addImage(imgId, {
+      // C 列（col index 2，宽约 93px）水平居中；行高 36pt≈48px，图片 44px 上下各留 2px
+      tl: { col: 2 + 0.26, row: (rowNo - 1) + 0.04 },
+      ext: { width: 44, height: 44 },
+      editAs: 'oneCell'
+    });
+  } catch { /* 图片嵌入失败不阻断 Excel 生成 */ }
+}
+
+/* ================== 采购订货单 Excel：清空明细区未使用行 ==================
+   模板明细区预留行带有样例数据，实际明细不足时必须清空，避免样例残留在成品中。 */
+function clearUnusedDetailRows(ws, detailStart, usedRows, totalRows) {
+  for (let i = usedRows; i < totalRows; i++) {
+    const row = ws.getRow(detailStart + i);
+    for (let c = 1; c <= 10; c++) row.getCell(c).value = null;
+  }
+}
