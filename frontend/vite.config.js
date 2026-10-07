@@ -11,6 +11,7 @@ export default defineConfig({
     }
   },
   server: {
+    host: true, // 监听 0.0.0.0，允许局域网同事访问
     port: 5173,
     // 代理到 Express 后端，前端请求 /api/** 时转发
     proxy: {

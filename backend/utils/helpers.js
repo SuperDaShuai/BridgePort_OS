@@ -150,7 +150,7 @@ function addPlugPhotosToWorksheet(ws, photos) {
   }
 }
 
-module.exports = { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership, addPlugPhotosToWorksheet, addDetailThumbToWorksheet, clearUnusedDetailRows };
+module.exports = { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership, addPlugPhotosToWorksheet, addDetailThumbToWorksheet, clearUnusedDetailRows, setDetailTotal };
 
 /* ================== 采购订货单 Excel：明细行产品缩略图 ==================
    模板明细区 C 列为「图片」列，每行产品图片以 44x44 嵌入。
@@ -177,4 +177,45 @@ function clearUnusedDetailRows(ws, detailStart, usedRows, totalRows) {
     const row = ws.getRow(detailStart + i);
     for (let c = 1; c <= 10; c++) row.getCell(c).value = null;
   }
+}
+
+/* ================== 采购订货单 Excel：合计行写入 ==================
+   模板原合计行固定在 row 15（A15:B15 标签 / C15:D15 值 / E15:J15 提示）。
+   当明细超 5 行时 insertRow 在 row 13+ 插行，原 row 15 的值/样式下移到 15+extra，
+   但 _merges 仍留在 row 15（陈旧）。需清除陈旧合并并在 15+extra 重建 + 写入合计数量。
+   注意：insertRow 后 unMergeCells 为空操作，必须用 delete _merges + cell.unmerge 双管齐下。 */
+function setDetailTotal(ws, extra, totalQty) {
+  const totalRow = 15 + extra;
+
+  // 1. 清除原 row 15 的陈旧合并（insertRow 后 unMergeCells 无效，用直接删除）
+  const staleAt15 = [];
+  for (const [master, m] of Object.entries(ws._merges || {})) {
+    const top = m && m.top !== undefined ? m.top : parseInt(String(master).replace(/\D/g, ''), 10);
+    if (top === 15) staleAt15.push(master);
+  }
+  for (const master of staleAt15) delete ws._merges[master];
+  for (let c = 1; c <= 10; c++) {
+    try { ws.getRow(15).getCell(c).unmerge(); } catch { /* 忽略 */ }
+  }
+
+  // 2. 清除 totalRow 位置的合并（电气区等模板合并仍留在原位，与合计行值区冲突）
+  if (totalRow !== 15) {
+    const staleAtTarget = [];
+    for (const [master, m] of Object.entries(ws._merges || {})) {
+      const top = m && m.top !== undefined ? m.top : parseInt(String(master).replace(/\D/g, ''), 10);
+      if (top === totalRow) staleAtTarget.push(master);
+    }
+    for (const master of staleAtTarget) delete ws._merges[master];
+    for (let c = 1; c <= 10; c++) {
+      try { ws.getRow(totalRow).getCell(c).unmerge(); } catch { /* 忽略 */ }
+    }
+  }
+
+  // 3. 重建合计行合并（A:B 标签 / C:D 值 / E:J 提示）
+  ws.mergeCells(`A${totalRow}:B${totalRow}`);
+  ws.mergeCells(`C${totalRow}:D${totalRow}`);
+  ws.mergeCells(`E${totalRow}:J${totalRow}`);
+
+  // 4. 写入合计数量到 C 列（值区 master 格）
+  ws.getCell(`C${totalRow}`).value = totalQty;
 }

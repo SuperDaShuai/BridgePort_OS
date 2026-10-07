@@ -53,7 +53,7 @@
     <el-dialog
       v-model="dialogVisible" :close-on-click-modal="false"
       :title="readonly ? '查看客户' : (form.id ? '编辑客户' : '新增客户')"
-      width="760px"
+      width="1080px"
       destroy-on-close
     >
       <el-form ref="formRef" :model="form" :rules="rules" :disabled="readonly" label-width="90px">

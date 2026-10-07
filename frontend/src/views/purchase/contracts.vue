@@ -1,12 +1,17 @@
 <template>
   <el-card shadow="never" class="page-card">
     <!-- 页面标题 -->
-    <div class="page-header">
+    <div class="page-header" style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
       <h2 class="page-title">采购管理 - 购销合同</h2>
+      <el-radio-group v-model="filterType" size="small">
+        <el-radio-button value="all">全部</el-radio-button>
+        <el-radio-button value="order">外销订单</el-radio-button>
+        <el-radio-button value="sample">样品单</el-radio-button>
+      </el-radio-group>
     </div>
 
     <!-- 列表 -->
-    <el-table v-loading="loading" :data="list" stripe>
+    <el-table v-loading="loading" :data="filteredList" stripe>
       <el-table-column label="购销合同编号" width="170">
         <template #default="{ row }">
           <strong>{{ contractNo(row) }}</strong>
@@ -290,6 +295,12 @@ const canMaintain = userStore.permissionLevel <= 2
 const loading = ref(false)
 const saving = ref(false)
 const list = ref([])
+// 来源筛选：all=全部 / order=仅外销订单 / sample=仅样品单
+const filterType = ref('all')
+const filteredList = computed(() => {
+  if (filterType.value === 'all') return list.value
+  return list.value.filter((row) => row.ref_type === filterType.value)
+})
 const supplierOptions = ref([])
 const companySettings = ref({})
 
@@ -581,13 +592,15 @@ async function openEdit(row) {
     if (!pc.payee_name && supplier.contacts && supplier.contacts.length) {
       editForm.value.payee_name = supplier.contacts[0].name || ''
     }
-    // 明细行：产品型号优先 supplier_model(our_model)，回退 model
+    // 明细行：产品型号优先 supplier_model(our_model)，回退 model；单价优先已保存采购价，为空回退产品库采购价（不回退外销价）
     editItems.value = (detail.items || []).map(it => ({
       ...it,
       supplier_model: it.supplier_model || it.model || '',
       qty: Number(it.qty || 0),
       unit: it.unit || '台',
-      cost_cny: it.cost_cny === null || it.cost_cny === undefined ? Number(it.price || 0) : Number(it.cost_cny)
+      cost_cny: it.cost_cny === null || it.cost_cny === undefined || it.cost_cny === ''
+        ? Number(it.product_purchase_cost || 0)
+        : Number(it.cost_cny)
     }))
     editVisible.value = true
   } catch { /* 拦截器 */ }

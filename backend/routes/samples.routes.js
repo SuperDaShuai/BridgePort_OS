@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../config/db');
-const { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership, addPlugPhotosToWorksheet, addDetailThumbToWorksheet, clearUnusedDetailRows } = require('../utils/helpers');
+const { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership, addPlugPhotosToWorksheet, addDetailThumbToWorksheet, clearUnusedDetailRows, setDetailTotal } = require('../utils/helpers');
 const { generateDefaultDocuments } = require('../utils/documents');
 const { logOperation, ownerOf } = require('../utils/operation-log');
 const ExcelJS = require('exceljs');
@@ -151,7 +151,7 @@ router.get(
     const denied = checkOwnership(sample, req, '样品单');
     if (denied) return res.fail(denied, 404);
     const [items] = await pool.query(
-      `SELECT si.*, p.spec_cn, p.our_model AS supplier_model
+      `SELECT si.*, p.spec_cn, p.our_model AS supplier_model, p.purchase_cost_rmb AS product_purchase_cost
        FROM sample_items si
        LEFT JOIN products p ON si.product_id = p.id
        WHERE si.sample_id = ?
@@ -489,6 +489,10 @@ router.get(
     });
     // 清空明细区未使用行（清除模板自带样例数据，避免残留）
     clearUnusedDetailRows(ws, DETAIL_START, detailRows.length, DETAIL_CAPACITY + extra);
+
+    // ===== 合计总数量：原 row 15 因插行下移到 15+extra，清除陈旧合并并重建 + 写入 =====
+    const totalQty = detailRows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+    setDetailTotal(ws, extra, totalQty);
 
     // ===== 三(附)、电源线/插头实物照片：A25 与 E25 合并为 A:J 整块并插入图片 =====
     addPlugPhotosToWorksheet(ws, Array.isArray(po.plug_photos) ? po.plug_photos : []);

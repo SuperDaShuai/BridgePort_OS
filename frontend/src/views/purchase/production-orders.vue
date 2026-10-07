@@ -1,12 +1,17 @@
 <template>
   <el-card shadow="never" class="page-card">
-    <!-- 页面标题 -->
-    <div class="page-header">
+    <!-- 页面标题 + 来源筛选 -->
+    <div class="page-header" style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
       <h2 class="page-title">采购管理 - 采购订货单 (POD)</h2>
+      <el-radio-group v-model="filterType" size="small">
+        <el-radio-button value="all">全部</el-radio-button>
+        <el-radio-button value="order">外销订单</el-radio-button>
+        <el-radio-button value="sample">样品单</el-radio-button>
+      </el-radio-group>
     </div>
 
     <!-- 列表 -->
-    <el-table v-loading="loading" :data="list" stripe>
+    <el-table v-loading="loading" :data="filteredList" stripe>
       <el-table-column label="采购订货单编号" width="180">
         <template #default="{ row }">
           <strong>{{ poNumber(row) }}</strong>
@@ -295,7 +300,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Printer, Download, Close } from '@element-plus/icons-vue'
 import { listOrders, getOrder, updateOrder } from '@/api/orders'
@@ -348,6 +353,12 @@ const LOGO_REQ_DEFAULT = '无'
 const loading = ref(false)
 const saving = ref(false)
 const list = ref([])
+// 来源筛选：all=全部 / order=仅外销订单 / sample=仅样品单
+const filterType = ref('all')
+const filteredList = computed(() => {
+  if (filterType.value === 'all') return list.value
+  return list.value.filter((row) => row.ref_type === filterType.value)
+})
 const supplierOptions = ref([])
 const companySettings = ref({})
 
