@@ -21,6 +21,21 @@ async function syncContacts(conn, ownerId, contacts) {
   }
 }
 
+// 同步收款路线：先删后插（必须在事务内调用）
+async function syncBankAccounts(conn, supplierId, routes) {
+  if (!Array.isArray(routes)) return;
+  await conn.query('DELETE FROM supplier_bank_accounts WHERE supplier_id = ?', [supplierId]);
+  const rows = routes
+    .filter((r) => r && (r.route_type || '').trim())
+    .map((r) => [supplierId, (r.route_type || '').trim(), r.routing_note || null]);
+  if (rows.length) {
+    await conn.query(
+      'INSERT INTO supplier_bank_accounts (supplier_id, route_type, routing_note) VALUES ?',
+      [rows]
+    );
+  }
+}
+
 router.get(
   '/',
   asyncHandler(async (req, res) => {
@@ -47,7 +62,11 @@ router.get(
       'SELECT id, name, position, phone, email, whatsapp, is_primary FROM contacts WHERE owner_type = ? AND owner_id = ? ORDER BY is_primary DESC, id',
       ['SUPPLIER', supplier.id]
     );
-    res.success({ ...supplier, contacts });
+    const [bankAccounts] = await pool.query(
+      'SELECT id, route_type, routing_note FROM supplier_bank_accounts WHERE supplier_id = ? ORDER BY id ASC',
+      [supplier.id]
+    );
+    res.success({ ...supplier, contacts, bank_accounts: bankAccounts });
   })
 );
 
@@ -62,6 +81,7 @@ router.post(
       await conn.beginTransaction();
       const [r] = await conn.query('INSERT INTO suppliers SET ?', data);
       await syncContacts(conn, r.insertId, req.body.contacts);
+      await syncBankAccounts(conn, r.insertId, req.body.bank_accounts);
       await conn.commit();
       res.success({ id: r.insertId }, '创建成功');
     } catch (e) {
@@ -78,7 +98,8 @@ router.put(
   asyncHandler(async (req, res) => {
     const data = pickFields(req.body, ALLOWED);
     const hasContacts = Array.isArray(req.body.contacts);
-    if (Object.keys(data).length === 0 && !hasContacts) return res.fail('无可更新字段', 400);
+    const hasBankAccounts = Array.isArray(req.body.bank_accounts);
+    if (Object.keys(data).length === 0 && !hasContacts && !hasBankAccounts) return res.fail('无可更新字段', 400);
 
     const conn = await pool.getConnection();
     try {
@@ -86,6 +107,7 @@ router.put(
       const [r] = await conn.query('UPDATE suppliers SET ? WHERE id = ?', [data, req.params.id]);
       if (r.affectedRows === 0) { await conn.rollback(); return res.fail('供应商不存在', 404); }
       if (hasContacts) await syncContacts(conn, Number(req.params.id), req.body.contacts);
+      if (hasBankAccounts) await syncBankAccounts(conn, Number(req.params.id), req.body.bank_accounts);
       await conn.commit();
       res.success({ id: Number(req.params.id) }, '更新成功');
     } catch (e) {
@@ -104,6 +126,7 @@ router.delete(
     try {
       await conn.beginTransaction();
       await conn.query('DELETE FROM contacts WHERE owner_type = ? AND owner_id = ?', ['SUPPLIER', req.params.id]);
+      await conn.query('DELETE FROM supplier_bank_accounts WHERE supplier_id = ?', [req.params.id]);
       const [r] = await conn.query('DELETE FROM suppliers WHERE id = ?', [req.params.id]);
       if (r.affectedRows === 0) { await conn.rollback(); return res.fail('供应商不存在', 404); }
       await conn.commit();

@@ -25,6 +25,10 @@
         />
       </el-select>
       <el-button :icon="Search" @click="onSearch">搜索</el-button>
+      <el-button-group>
+        <el-button :type="priceCurrency === 'RMB' ? 'primary' : 'default'" @click="setListCurrency('RMB')">¥ RMB</el-button>
+        <el-button :type="priceCurrency === 'USD' ? 'primary' : 'default'" @click="setListCurrency('USD')">$ USD</el-button>
+      </el-button-group>
       <div class="toolbar-right">
         <el-button v-if="canEdit" type="primary" :icon="Plus" @click="openCreate">新增产品</el-button>
       </div>
@@ -89,8 +93,30 @@
           {{ row.unit_weight_kg != null ? Number(row.unit_weight_kg).toFixed(3) : '—' }}
         </template>
       </el-table-column>
-      <el-table-column v-if="!userStore.hidePurchaseAndProfit" prop="purchase_cost_rmb" label="采购价(¥)" width="100" align="right" />
-      <el-table-column prop="export_price_usd" label="外销价(¥)" width="100" align="right" />
+      <el-table-column v-if="!userStore.hidePurchaseAndProfit" prop="purchase_cost_rmb" width="110" align="right">
+        <template #header>
+          <span
+            style="cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px;"
+            title="点击切换人民币/美元"
+            @click="togglePriceCurrency"
+          >采购价{{ priceSign }} <span style="font-size: 11px; opacity: .55;">⇄</span></span>
+        </template>
+        <template #default="{ row }">
+          {{ formatPrice(row.purchase_cost_rmb, 4) }}
+        </template>
+      </el-table-column>
+      <el-table-column prop="export_price_usd" width="110" align="right">
+        <template #header>
+          <span
+            style="cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px;"
+            title="点击切换人民币/美元"
+            @click="togglePriceCurrency"
+          >外销价{{ priceSign }} <span style="font-size: 11px; opacity: .55;">⇄</span></span>
+        </template>
+        <template #default="{ row }">
+          {{ formatPrice(row.export_price_usd, 2) }}
+        </template>
+      </el-table-column>
       <el-table-column label="交货期" prop="delivery_period" width="100" show-overflow-tooltip />
       <el-table-column label="备注" prop="remark" min-width="140" show-overflow-tooltip>
         <template #default="{ row }">
@@ -137,6 +163,26 @@
           <el-col :span="8" v-if="!userStore.hideSupplierInfo">
             <el-form-item label="供应商型号">
               <el-input v-model="form.our_model" placeholder="供应商型号" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="产品类型">
+              <el-select
+                v-model="form.product_type"
+                filterable
+                clearable
+                allow-create
+                default-first-option
+                placeholder="选择或输入产品类型"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="t in productTypeOptions"
+                  :key="t.id"
+                  :label="t.product_type"
+                  :value="t.product_type"
+                />
+              </el-select>
             </el-form-item>
           </el-col>
           <el-col :span="8">
@@ -390,16 +436,40 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
-import { listProducts, createProduct, updateProduct, deleteProduct, listProductPhotos, addProductPhoto, deleteProductPhoto } from '@/api/products'
+import { listProducts, createProduct, updateProduct, deleteProduct, listProductPhotos, addProductPhoto, deleteProductPhoto, listProductConfigs } from '@/api/products'
 import { listSuppliers } from '@/api/suppliers'
 import { listHsCodes } from '@/api/hsCodes'
+import { getCompanySettings } from '@/api/companySettings'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
 const canEdit = userStore.canEdit
+
+// 币种切换：产品价格区（采购价/外销价）默认人民币，点击切换美元
+const companySettings = ref({})
+const priceCurrency = ref('RMB') // 'RMB' 或 'USD'
+const usdRate = computed(() => Number(companySettings.value.default_usd_rate) || 7.2)
+const priceSign = computed(() => priceCurrency.value === 'RMB' ? '¥' : '$')
+
+// 币种切换：只改 state，列表的 formatPrice 响应式刷新
+// 编辑弹窗永远是 RMB 固定值，不受此开关影响
+function togglePriceCurrency() {
+  priceCurrency.value = priceCurrency.value === 'RMB' ? 'USD' : 'RMB'
+}
+function setListCurrency(cur) {
+  priceCurrency.value = cur
+}
+
+// 列表价格显示：DB 始终存 RMB，按当前币种换算
+function formatPrice(rmbVal, decimals = 2) {
+  if (rmbVal == null || rmbVal === '') return '—'
+  const v = Number(rmbVal) || 0
+  if (priceCurrency.value === 'RMB') return v.toFixed(decimals)
+  return (v / usdRate.value).toFixed(decimals)
+}
 
 // 产品多图状态
 const photoDialogVisible = ref(false)
@@ -413,7 +483,8 @@ const list = ref([])
 const total = ref(0)
 const supplierOptions = ref([])
 const hsCodeOptions = ref([])
-const query = reactive({ q: '', supplierId: null, page: 1, pageSize: 10 })
+const productTypeOptions = ref([])
+const query = reactive({ q: '', supplierId: null, page: 1, pageSize: 20 })
 
 const dialogVisible = ref(false)
 const readonly = ref(false)
@@ -435,7 +506,7 @@ const NUMERIC_FIELDS = [
 ]
 
 const blankForm = () => ({
-  model: '', our_model: '', hs_code: '', supplier_id: null, name_cn: '', name_en: '', spec: '', spec_cn: '', remark: '', delivery_period: '', img_url: '',
+  model: '', our_model: '', product_type: '', hs_code: '', supplier_id: null, name_cn: '', name_en: '', spec: '', spec_cn: '', remark: '', delivery_period: '', img_url: '',
   ...Object.fromEntries(NUMERIC_FIELDS.map((k) => [k, undefined]))
 })
 
@@ -576,6 +647,15 @@ async function loadHsCodes() {
   }
 }
 
+async function loadProductTypes() {
+  try {
+    const d = await listProductConfigs({ page: 1, pageSize: 200 })
+    productTypeOptions.value = d.list || []
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
 function onSearch() {
   query.page = 1
   loadList()
@@ -640,6 +720,8 @@ onMounted(() => {
   loadList()
   loadSuppliers()
   loadHsCodes()
+  loadProductTypes()
+  getCompanySettings().then((s) => { companySettings.value = s || {} }).catch(() => {})
 })
 </script>
 

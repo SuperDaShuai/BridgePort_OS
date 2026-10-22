@@ -87,7 +87,7 @@
       <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
         <div class="form-grid-4">
           <el-form-item label="PI 编号" prop="pi_number">
-            <el-input v-model="form.pi_number" placeholder="BP-YYYY-NNN" />
+            <el-input v-model="form.pi_number" placeholder="MT26NNN（自动生成）" />
           </el-form-item>
           <el-form-item label="签约日期" prop="signing_date">
             <el-date-picker v-model="form.signing_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
@@ -254,6 +254,11 @@
               <span class="subtotal">{{ priceSign }}{{ formatMoney(row.subtotal_amount) }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="毛重(kg)" width="100" align="center">
+            <template #default="{ row }">
+              <span class="gw-cell">{{ rowGw(row) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="CBM(箱体积)" width="110" align="center">
             <template #default="{ row }">
               <span class="cbm-cell">{{ rowCbm(row) }}</span>
@@ -267,7 +272,11 @@
         </el-table>
 
         <div class="total-bar">
-          <span>订单外销总额：</span>
+          <span>总体积：</span>
+          <span class="total-amount">{{ totalCbm }} CBM</span>
+          <span style="margin: 0 24px;">总毛重：</span>
+          <span class="total-amount">{{ totalGw }} kg</span>
+          <span style="margin: 0 24px;">订单外销总额：</span>
           <span class="total-amount">{{ priceSign }}{{ formatMoney(orderTotal) }}</span>
         </div>
       </el-form>
@@ -333,7 +342,7 @@ const supplierOptions = ref([])
 const bankOptions = ref([])
 const paymentTermOptions = ref([])
 const companySettings = ref({})
-const query = reactive({ q: '', status: '', page: 1, pageSize: 10 })
+const query = reactive({ q: '', status: '', page: 1, pageSize: 20 })
 
 // 明细单价币种切换：默认人民币，点击列头在 ¥/$ 间切换
 const priceCurrency = ref('RMB') // 'RMB' 或 'USD'
@@ -500,6 +509,25 @@ function rowCbm(row) {
   const cbmPerCtn = Number(row.cbm_per_ctn) || 0
   return (ctns * cbmPerCtn).toFixed(3)
 }
+
+// 行毛重(kg) = 箱数 × 单箱毛重(gw_per_ctn)，gw_per_ctn 在选产品时由产品数据库 gross_weight_kg 自动带入
+function rowGw(row) {
+  const ctns = Number(row.ctns) || 0
+  const gwPerCtn = Number(row.gw_per_ctn) || 0
+  return (ctns * gwPerCtn).toFixed(2)
+}
+
+// 总体积(CBM) = 所有明细行 CBM 之和
+const totalCbm = computed(() => {
+  const items = form.value.items || []
+  return items.reduce((s, it) => s + (Number(it.ctns) || 0) * (Number(it.cbm_per_ctn) || 0), 0).toFixed(3)
+})
+
+// 总毛重(kg) = 所有明细行毛重之和
+const totalGw = computed(() => {
+  const items = form.value.items || []
+  return items.reduce((s, it) => s + (Number(it.ctns) || 0) * (Number(it.gw_per_ctn) || 0), 0).toFixed(2)
+})
 
 // 用户手动改单价：严格按当前币种同步回写 price_rmb 基准
 // RMB 模式 → price_rmb = price；USD 模式 → price_rmb = price × 汇率

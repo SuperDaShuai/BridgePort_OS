@@ -2,9 +2,9 @@
   <div class="login-page">
     <el-card class="login-card" shadow="always">
       <div class="login-logo">
-        <span class="logo-mark">BP</span>
+        <span class="logo-mark">MT</span>
         <div>
-          <div class="logo-title">BridgePort OS</div>
+          <div class="logo-title">麦顿OS</div>
           <div class="logo-sub">外贸全生命周期管理系统</div>
         </div>
       </div>

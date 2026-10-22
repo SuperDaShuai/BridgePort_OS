@@ -10,7 +10,7 @@ const ORDER_ITEM_FIELDS = [
   'product_id', 'model', 'name_en', 'hs_code', 'unit',
   'img_url', 'spec',
   'pcs_per_ctn', 'ctns', 'qty',
-  'price', 'subtotal_amount',
+  'price', 'cost_cny', 'subtotal_amount',
   'nw_per_ctn', 'gw_per_ctn', 'cbm_per_ctn'
 ];
 
@@ -37,24 +37,25 @@ function normalizeItems(items) {
     .map((it) => ITEM_FIELDS.map((f) => (it[f] === undefined || it[f] === '' ? null : it[f])));
 }
 
-// 生成下一个报价单号（格式 QT-YYYYMMDD-NNN，同日内递增，跨日重置）
+// 生成下一个报价单号（格式 QT${yy}NNN，两位年份后缀区分年份）
 router.get(
   '/next-number',
   asyncHandler(async (req, res) => {
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const prefix = 'QT-' + today;
+    const yy = String(new Date().getFullYear()).slice(2);
+    const prefix = 'QT' + yy;
     const [[row]] = await pool.query(
       `SELECT quotation_number FROM quotations
        WHERE quotation_number LIKE ?
-       ORDER BY quotation_number DESC LIMIT 1`,
-      [prefix + '-%']
+       ORDER BY CAST(RIGHT(quotation_number, LENGTH(quotation_number) - ${prefix.length}) AS UNSIGNED) DESC
+       LIMIT 1`,
+      [prefix + '%']
     );
     let seq = 1;
     if (row) {
-      const m = row.quotation_number.match(/-(\d{3})$/);
+      const m = row.quotation_number.match(/(\d{3})$/);
       if (m) seq = parseInt(m[1], 10) + 1;
     }
-    res.success(prefix + '-' + String(seq).padStart(3, '0'));
+    res.success(prefix + String(seq).padStart(3, '0'));
   })
 );
 
@@ -148,19 +149,22 @@ router.post(
         return res.fail('报价单无产品明细，无法转为 PI', 400);
       }
 
-      // 2. 生成新的 PI 号 BP-YYYY-NNN（同 orders.routes.js 逻辑）
-      const year = new Date().getFullYear();
-      const prefix = 'BP-' + year;
+      // 2. 生成新的 PI 号 MT${yy}NNN（两位年份后缀区分年份，同 orders.routes.js 逻辑）
+      const yy = String(new Date().getFullYear()).slice(2);
+      const prefix = 'MT' + yy;
       const [[lastPi]] = await conn.query(
-        `SELECT pi_number FROM orders WHERE pi_number LIKE ? ORDER BY pi_number DESC LIMIT 1`,
-        [prefix + '-%']
+        `SELECT pi_number FROM orders
+         WHERE pi_number LIKE ?
+         ORDER BY CAST(RIGHT(pi_number, LENGTH(pi_number) - ${prefix.length}) AS UNSIGNED) DESC
+         LIMIT 1`,
+        [prefix + '%']
       );
       let seq = 1;
       if (lastPi) {
-        const m = lastPi.pi_number.match(/-(\d{3})$/);
+        const m = lastPi.pi_number.match(/(\d{3})$/);
         if (m) seq = parseInt(m[1], 10) + 1;
       }
-      const piNumber = prefix + '-' + String(seq).padStart(3, '0');
+      const piNumber = prefix + String(seq).padStart(3, '0');
 
       // 3. 取默认银行账户（取第一条作为兜底）
       const [[defaultBank]] = await conn.query(
@@ -204,13 +208,27 @@ router.post(
         quotation_id: quoteId
       };
 
-      // 7. 明细映射：moq(箱数) → ctns，qty = ctns × pcs_per_ctn
+      // 7. 批量取产品库的采购价（cost_cny 来源：products.purchase_cost_rmb）
+      const productIds = items.map(it => it.product_id).filter(Boolean);
+      const productPurchaseMap = new Map();
+      if (productIds.length > 0) {
+        const [prods] = await conn.query(
+          `SELECT id, purchase_cost_rmb FROM products WHERE id IN (${productIds.join(',')})`
+        );
+        for (const p of prods) productPurchaseMap.set(p.id, Number(p.purchase_cost_rmb) || 0);
+      }
+
+      // 8. 明细映射：moq(箱数) → ctns，qty = ctns × pcs_per_ctn，
+      //    cost_cny 从产品库 purchase_cost_rmb 取
       let totalAmount = 0;
       const orderItems = items.map((it) => {
         const pcs = Number(it.pcs_per_ctn) || 1;
         const ctns = Number(it.moq) || 0; // 报价单"数量(箱)"直接作为订单箱数
         const qty = ctns * pcs;           // 总数量 = 箱数 × 件/箱
-        const price = Number(it.price) || 0;
+        const price = Number(it.price) || 0;       // 外销价 USD（报价单快照）
+        const costCny = productIds.length > 0
+          ? productPurchaseMap.get(it.product_id) || 0
+          : 0;                                      // 采购价 RMB（产品库）
         const subtotal = Number((qty * price).toFixed(2));
         totalAmount += subtotal;
 
@@ -226,6 +244,7 @@ router.post(
           ctns: ctns,
           qty: qty,
           price: price,
+          cost_cny: costCny,         // ← 采购价从产品库带过来
           subtotal_amount: subtotal,
           nw_per_ctn: it.nw_per_ctn,
           gw_per_ctn: it.gw_per_ctn,
@@ -284,41 +303,42 @@ router.post(
   asyncHandler(async (req, res) => {
     const data = pickFields(req.body, ALLOWED);
 
-    // 报价单号自动生成 + 唯一性校验
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const prefix = 'QT-' + today;
+    // 报价单号自动生成 + 唯一性校验（格式 QT${yy}NNN，两位年份后缀区分年份）
+    const yy = String(new Date().getFullYear()).slice(2);
+    const prefix = 'QT' + yy;
     if (!data.quotation_number) {
-      // 未传 → 自动生成（同日期最大编号 + 1）
       const [[row]] = await pool.query(
         `SELECT quotation_number FROM quotations
-         WHERE quotation_number LIKE ? ORDER BY quotation_number DESC LIMIT 1`,
-        [prefix + '-%']
+         WHERE quotation_number LIKE ?
+         ORDER BY CAST(RIGHT(quotation_number, LENGTH(quotation_number) - ${prefix.length}) AS UNSIGNED) DESC
+         LIMIT 1`,
+        [prefix + '%']
       );
       let seq = 1;
       if (row) {
-        const m = row.quotation_number.match(/-(\d{3})$/);
+        const m = row.quotation_number.match(/(\d{3})$/);
         if (m) seq = parseInt(m[1], 10) + 1;
       }
-      data.quotation_number = prefix + '-' + String(seq).padStart(3, '0');
+      data.quotation_number = prefix + String(seq).padStart(3, '0');
     } else {
-      // 已传 → 检查是否重复
       const [[dup]] = await pool.query(
         'SELECT id FROM quotations WHERE quotation_number = ?',
         [data.quotation_number]
       );
       if (dup) {
-        // 重复 → 自动递增编号直到唯一
         const [[row]] = await pool.query(
           `SELECT quotation_number FROM quotations
-           WHERE quotation_number LIKE ? ORDER BY quotation_number DESC LIMIT 1`,
-          [prefix + '-%']
+           WHERE quotation_number LIKE ?
+           ORDER BY CAST(RIGHT(quotation_number, LENGTH(quotation_number) - ${prefix.length}) AS UNSIGNED) DESC
+           LIMIT 1`,
+          [prefix + '%']
         );
         let seq = 1;
         if (row) {
-          const m = row.quotation_number.match(/-(\d{3})$/);
+          const m = row.quotation_number.match(/(\d{3})$/);
           if (m) seq = parseInt(m[1], 10) + 1;
         }
-        data.quotation_number = prefix + '-' + String(seq).padStart(3, '0');
+        data.quotation_number = prefix + String(seq).padStart(3, '0');
       }
     }
 

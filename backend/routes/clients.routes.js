@@ -7,6 +7,27 @@ const router = express.Router();
 
 const ALLOWED = ['name_en', 'short_name', 'country', 'destination_port', 'main_products', 'website_url', 'address_en'];
 
+// 仅超级管理员可用
+function requireAdmin(req) {
+  if (req.operator.permission_level !== 1) return '仅超级管理员可操作';
+  return null;
+}
+
+// 业务员列表（供分配接口下拉使用，仅超级管理员可调用）
+router.get(
+  '/sales-people',
+  asyncHandler(async (req, res) => {
+    const denied = requireAdmin(req);
+    if (denied) return res.fail(denied, 403);
+    const [rows] = await pool.query(
+      `SELECT id, display_name, username, role, permission_level FROM operators
+       WHERE permission_level <= 3 AND status = 1
+       ORDER BY permission_level ASC, id ASC`
+    );
+    res.success(rows);
+  })
+);
+
 // 同步联系人：先删后插（必须在事务内调用）
 async function syncContacts(conn, ownerId, contacts) {
   if (!Array.isArray(contacts)) return;
@@ -115,6 +136,104 @@ router.put(
       if (hasContacts) await syncContacts(conn, Number(req.params.id), req.body.contacts);
       await conn.commit();
       res.success({ id: Number(req.params.id) }, '更新成功');
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+  })
+);
+
+// 分配客户给业务员（超级管理员），级联变更关联订单/样品单/报价单/询价单负责人
+router.put(
+  '/:id/assign',
+  asyncHandler(async (req, res) => {
+    const denied = requireAdmin(req);
+    if (denied) return res.fail(denied, 403);
+
+    const targetId = Number(req.body.owner_id);
+    if (!targetId) return res.fail('请选择目标业务员', 400);
+
+    const [[target]] = await pool.query('SELECT id, display_name, username, permission_level FROM operators WHERE id = ?', [targetId]);
+    if (!target) return res.fail('目标业务员不存在', 404);
+    const targetName = target.display_name || target.username;
+
+    const [[before]] = await pool.query('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+    if (!before) return res.fail('客户不存在', 404);
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      // 1. 更新客户负责人
+      await conn.query('UPDATE clients SET owner_id = ?, owner_name = ? WHERE id = ?', [targetId, targetName, req.params.id]);
+      // 2. 级联更新所有关联单据（仅更新负责人是该客户旧负责人的单据，避免覆盖已分配的）
+      const oldOwnerId = before.owner_id;
+      if (oldOwnerId) {
+        const tables = [
+          ['orders', 'client_id'],
+          ['samples_tracking', 'client_id'],
+          ['quotations', 'client_id'],
+          ['rfqs', 'client_id']
+        ];
+        for (const [table, fk] of tables) {
+          await conn.query(
+            `UPDATE ${table} SET owner_id = ?, owner_name = ? WHERE ${fk} = ? AND owner_id = ?`,
+            [targetId, targetName, req.params.id, oldOwnerId]
+          );
+        }
+      }
+      await conn.commit();
+      res.success({ id: Number(req.params.id), owner_id: targetId, owner_name: targetName }, '分配成功');
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally {
+      conn.release();
+    }
+  })
+);
+
+// 批量分配客户给业务员（超级管理员）
+router.put(
+  '/batch-assign',
+  asyncHandler(async (req, res) => {
+    const denied = requireAdmin(req);
+    if (denied) return res.fail(denied, 403);
+
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number) : [];
+    const targetId = Number(req.body.owner_id);
+    if (!ids.length) return res.fail('请选择要分配的客户', 400);
+    if (!targetId) return res.fail('请选择目标业务员', 400);
+
+    const [[target]] = await pool.query('SELECT id, display_name, username FROM operators WHERE id = ?', [targetId]);
+    if (!target) return res.fail('目标业务员不存在', 404);
+    const targetName = target.display_name || target.username;
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      // 查询这些客户的旧负责人，用于级联更新时的条件限定
+      const [clients] = await conn.query(`SELECT id, owner_id FROM clients WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+      await conn.query(`UPDATE clients SET owner_id = ?, owner_name = ? WHERE id IN (${ids.map(() => '?').join(',')})`, [targetId, targetName, ...ids]);
+      // 按客户逐个级联更新单据（限制 owner_id = 旧负责人）
+      const tables = [
+        ['orders', 'client_id'],
+        ['samples_tracking', 'client_id'],
+        ['quotations', 'client_id'],
+        ['rfqs', 'client_id']
+      ];
+      for (const cl of clients) {
+        if (!cl.owner_id) continue;
+        for (const [table, fk] of tables) {
+          await conn.query(
+            `UPDATE ${table} SET owner_id = ?, owner_name = ? WHERE ${fk} = ? AND owner_id = ?`,
+            [targetId, targetName, cl.id, cl.owner_id]
+          );
+        }
+      }
+      await conn.commit();
+      res.success({ updated_clients: ids.length }, '批量分配成功');
     } catch (e) {
       await conn.rollback();
       throw e;

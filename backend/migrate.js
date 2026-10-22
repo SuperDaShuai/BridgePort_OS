@@ -961,6 +961,101 @@ const migrations = [
       await runSQL(conn, `ALTER TABLE clients
         ADD COLUMN short_name VARCHAR(100) NULL DEFAULT NULL COMMENT '客户简称，用于采购订货单等单据' AFTER name_en`);
     }
+  },
+  // ===== 040 · 购销合同/生产任务单按供应商拆分（结构存 JSON 顶层，无需建表/加字段） =====
+  {
+    id: '040',
+    desc: '购销合同/生产任务单按供应商拆分（sub_contracts/sub_orders 数组存 JSON 顶层，无需 ALTER）',
+    async check(conn) {
+      // 占位迁移：仅靠 schema_migrations 记录标记，不检查任何表结构
+      return false;
+    },
+    async up(conn) {
+      // 无操作：拆分结构全部存入 orders.purchase_contract / orders.production_order
+      // 和 samples_tracking.purchase_contract / samples_tracking.production_order 的 JSON 顶层
+      await runSQL(conn, `SELECT 1`);
+    }
+  },
+  // ===== 041 · 产品配置管理表 =====
+  {
+    id: '041',
+    desc: '新建 product_configs 表（产品配置管理，用于生产任务单模块二动态字段）',
+    async check(conn) {
+      return await tableExists(conn, 'product_configs');
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '041_product_configs.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
+  },
+  // ===== 042 · products 表新增 product_type 字段 =====
+  {
+    id: '042',
+    desc: 'products 表新增 product_type 字段（关联产品配置管理的产品类型名称）',
+    async check(conn) {
+      const [[row]] = await conn.query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products' AND COLUMN_NAME = 'product_type'`, [process.env.DB_NAME]);
+      return !!row;
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '042_products_product_type.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
+  },
+  // ===== 043 · product_configs 表新增 spec_fields 列（详细规范字段定义） =====
+  {
+    id: '043',
+    desc: 'product_configs 表新增 spec_fields 列（详细规范字段定义，独立于模块二 config_fields）',
+    async check(conn) {
+      const [[row]] = await conn.query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'product_configs' AND COLUMN_NAME = 'spec_fields'`, [process.env.DB_NAME]);
+      return !!row;
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '043_product_configs_spec_fields.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
+  },
+  // ===== 044 · 供应商收款路线库 =====
+  {
+    id: '044',
+    desc: '新建 supplier_bank_accounts 表（供应商收款资料：多币种收款路线库）',
+    async check(conn) {
+      return await tableExists(conn, 'supplier_bank_accounts');
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '044_supplier_bank_accounts.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
+  },
+  // ===== 045 · order_items/sample_items 新增 supplier_model 列 =====
+  {
+    id: '045',
+    desc: 'order_items / sample_items 新增 supplier_model（供应商型号）列，前端编辑框可持久化',
+    async check(conn) {
+      const [rows] = await conn.execute(
+        `SELECT COUNT(*) AS c FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'order_items' AND COLUMN_NAME = 'supplier_model'`
+      );
+      return rows[0].c > 0;
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '045_items_supplier_model.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
   }
 ];
 

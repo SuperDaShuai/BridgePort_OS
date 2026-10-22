@@ -127,6 +127,12 @@ const routes = [
         meta: { title: '产品数据库', permission: [1, 2, 3] }
       },
       {
+        path: 'master/product-configs',
+        name: 'MasterProductConfigs',
+        component: () => import('@/views/master/product-configs.vue'),
+        meta: { title: '产品配置管理', permission: [1, 2] }
+      },
+      {
         path: 'master/hs-codes',
         name: 'MasterHsCodes',
         component: () => import('@/views/master/hs-codes.vue'),

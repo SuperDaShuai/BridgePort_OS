@@ -92,6 +92,35 @@
 
         <el-divider content-position="left">联系人</el-divider>
         <ContactsEditor v-model="form.contacts" />
+
+        <el-divider content-position="left">收款资料（多币种收款路线库）</el-divider>
+        <div class="bank-editor">
+          <el-table :data="form.bank_accounts" size="small" border empty-text="暂无收款路线，点击下方按钮添加">
+            <el-table-column type="index" label="#" width="42" align="center" />
+            <el-table-column label="路线类型" width="200">
+              <template #default="{ row }">
+                <el-input v-model="row.route_type" placeholder="如：USD / RMB / LC" />
+              </template>
+            </el-table-column>
+            <el-table-column label="路由备注" min-width="320">
+              <template #default="{ row }">
+                <el-input
+                  v-model="row.routing_note"
+                  type="textarea" :rows="3"
+                  placeholder="收款人名称、开户行、账号、中转行等补充信息"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="70" align="center">
+              <template #default="{ $index }">
+                <el-button link type="danger" @click="removeBankAccount($index)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-button class="add-bank-btn" type="primary" plain size="small" @click="addBankAccount">
+            + 添加收款路线
+          </el-button>
+        </div>
       </el-form>
 
       <template #footer>
@@ -117,7 +146,7 @@ const loading = ref(false)
 const saving = ref(false)
 const list = ref([])
 const total = ref(0)
-const query = reactive({ q: '', page: 1, pageSize: 10 })
+const query = reactive({ q: '', page: 1, pageSize: 20 })
 
 const dialogVisible = ref(false)
 const readonly = ref(false)
@@ -129,8 +158,17 @@ const rules = {
 
 const blankForm = () => ({
   name: '', credit_code: '', city: '', main_category: '', factory_address: '',
-  bank_name: '', account_number: '', contacts: []
+  bank_name: '', account_number: '', contacts: [], bank_accounts: []
 })
+
+// 收款路线行操作（随表单整体提交，保存时后端先删后插）
+function addBankAccount() {
+  form.value.bank_accounts.push({ route_type: '', routing_note: '' })
+}
+
+function removeBankAccount(index) {
+  form.value.bank_accounts.splice(index, 1)
+}
 
 async function loadList() {
   loading.value = true
@@ -159,14 +197,14 @@ function openCreate() {
 async function openView(row) {
   readonly.value = true
   const detail = await getSupplier(row.id)
-  form.value = { ...detail, contacts: detail.contacts || [] }
+  form.value = { ...detail, contacts: detail.contacts || [], bank_accounts: detail.bank_accounts || [] }
   dialogVisible.value = true
 }
 
 async function openEdit(row) {
   readonly.value = false
   const detail = await getSupplier(row.id)
-  form.value = { ...detail, contacts: detail.contacts || [] }
+  form.value = { ...detail, contacts: detail.contacts || [], bank_accounts: detail.bank_accounts || [] }
   dialogVisible.value = true
 }
 
@@ -209,3 +247,9 @@ async function onDelete(row) {
 
 onMounted(loadList)
 </script>
+
+<style scoped>
+.bank-editor .add-bank-btn {
+  margin-top: 8px;
+}
+</style>

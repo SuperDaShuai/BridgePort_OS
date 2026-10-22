@@ -41,6 +41,7 @@ coverage/
 *.test.js
 *.spec.js
 
-# ========== Markdown 文档（仅 README 入库） ==========
+# ========== Markdown 文档（仅 README 与 AGENTS 入库） ==========
 *.md
 !README.md
+!AGENTS.md

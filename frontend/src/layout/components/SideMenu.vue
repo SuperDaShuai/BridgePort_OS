@@ -81,6 +81,7 @@
         </template>
         <el-menu-item v-if="userStore.canSee([1, 2, 3])" index="/master/clients">客户管理</el-menu-item>
         <el-menu-item v-if="userStore.canSee([1, 2, 3])" index="/master/products">产品数据库</el-menu-item>
+        <el-menu-item v-if="userStore.canSee([1, 2])" index="/master/product-configs">产品配置管理</el-menu-item>
         <el-menu-item v-if="userStore.canSee([1, 2, 3])" index="/master/hs-codes">HS编码库</el-menu-item>
         <el-menu-item v-if="userStore.canSee([1, 2, 4])" index="/master/suppliers">供应商管理</el-menu-item>
 
@@ -111,7 +112,7 @@ const route = useRoute()
 const userStore = useUserStore()
 
 // 默认展开所有分组
-const openeds = ['g-business', 'g-fulfillment', 'g-qc', 'g-tools', 'g-finance', 'g-master', 'g-system']
+const openeds = []
 </script>
 
 <style scoped>
@@ -120,6 +121,20 @@ const openeds = ['g-business', 'g-fulfillment', 'g-qc', 'g-tools', 'g-finance', 
 }
 .side-menu {
   border-right: none;
+  --el-menu-item-height: 38px;
+  --el-menu-sub-item-height: 38px;
+  --el-menu-base-level-padding: 18px;
+  --el-menu-level-padding: 24px;
+}
+.side-menu :deep(.el-menu-item),
+.side-menu :deep(.el-sub-menu__title) {
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+  line-height: 30px !important;
+}
+.side-menu :deep(.el-sub-menu .el-menu-item) {
+  min-height: 34px !important;
+  line-height: 26px !important;
 }
 /* 子菜单背景加深一档，保持暗色层次 */
 .side-menu :deep(.el-menu-item.is-active) {

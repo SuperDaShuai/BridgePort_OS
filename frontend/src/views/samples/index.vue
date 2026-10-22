@@ -46,9 +46,34 @@
         </template>
       </el-table-column>
       <el-table-column prop="sent_date" label="寄出日期" width="105" />
-      <el-table-column label="反馈状态" width="110" align="center">
+      <el-table-column label="反馈状态" width="130" align="center">
         <template #default="{ row }">
-          <el-tag v-if="row.feedback_status" :type="feedbackTag[row.feedback_status] || 'info'" size="small">
+          <el-dropdown
+            v-if="canChangeStatus"
+            trigger="click"
+            @command="(cmd) => onStatusChange(row, cmd)"
+          >
+            <el-tag
+              :type="feedbackTag[row.feedback_status] || 'info'"
+              size="small"
+              style="cursor: pointer;"
+            >
+              {{ row.feedback_status }} ▾
+            </el-tag>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item
+                  v-for="s in FEEDBACK_STATUSES"
+                  :key="s"
+                  :command="s"
+                  :disabled="s === row.feedback_status"
+                >
+                  {{ s }}
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-tag v-else-if="row.feedback_status" :type="feedbackTag[row.feedback_status] || 'info'" size="small">
             {{ row.feedback_status }}
           </el-tag>
         </template>
@@ -317,10 +342,12 @@ import { useUserStore } from '@/stores/user'
 const userStore = useUserStore()
 // 样品单操作权限：跟单(5)/财务(4)只读，业务员(3)可操作，主管及以上不限
 const canEdit = userStore.permissionLevel <= 3
+// 跟单(等级5)也可以更改反馈状态（点击标签下拉）
+const canChangeStatus = userStore.permissionLevel <= 5
 
-const FEEDBACK_STATUSES = ['准备中', '待下单', '已下单', '已寄出', '客户已签收', '确认合格', '需重新打样']
+const FEEDBACK_STATUSES = ['准备中', '待下单', '已下单', '已寄出', '客户已签收', '确认合格', '需重新打样', '已取消']
 const feedbackTag = {
-  准备中: 'info', 待下单: 'warning', 已下单: '', 已寄出: 'primary', 客户已签收: 'warning', 确认合格: 'success', 需重新打样: 'danger'
+  准备中: 'info', 待下单: 'warning', 已下单: 'success', 已寄出: 'primary', 客户已签收: 'warning', 确认合格: 'success', 需重新打样: 'danger', 已取消: 'info'
 }
 
 const loading = ref(false)
@@ -333,7 +360,7 @@ const rfqOptions = ref([])
 const bankOptions = ref([])
 const paymentTermOptions = ref([])
 const companySettings = ref({})
-const query = reactive({ q: '', status: '', page: 1, pageSize: 10 })
+const query = reactive({ q: '', status: '', page: 1, pageSize: 20 })
 
 const dialogVisible = ref(false)
 const formRef = ref()
@@ -370,6 +397,15 @@ const orderTotal = computed(() =>
   (form.value.items || []).reduce((s, it) => s + (Number(it.subtotal_amount) || 0), 0)
 )
 function formatMoney(v) { return Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
+
+// 点击标签快速切换反馈状态
+async function onStatusChange(row, status) {
+  try {
+    await updateSample(row.id, { feedback_status: status })
+    row.feedback_status = status
+    ElMessage.success('状态已更新为：' + status)
+  } catch { /* 拦截器提示 */ }
+}
 
 async function loadList() {
   loading.value = true

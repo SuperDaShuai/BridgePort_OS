@@ -1,7 +1,7 @@
 <template>
   <el-card shadow="never" class="page-card">
     <!-- 页面标题 -->
-    <div class="page-header" style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+    <div class="page-header" style="display: flex; align-items: center; gap: 16px;">
       <h2 class="page-title">采购管理 - 购销合同</h2>
       <el-radio-group v-model="filterType" size="small">
         <el-radio-button value="all">全部</el-radio-button>
@@ -10,8 +10,9 @@
       </el-radio-group>
     </div>
 
-    <!-- 列表 -->
-    <el-table v-loading="loading" :data="filteredList" stripe>
+    <!-- 列表（树形：多供应商订单可展开子合同；默认不展开） -->
+    <el-table v-loading="loading" :data="filteredList" stripe
+      row-key="rowKey" :tree-props="{ children: 'children' }">
       <el-table-column label="购销合同编号" width="170">
         <template #default="{ row }">
           <strong>{{ contractNo(row) }}</strong>
@@ -20,33 +21,38 @@
       <el-table-column label="关联数据" width="160">
         <template #default="{ row }">
           <strong style="color: #2563eb;">{{ row.ref_number }}</strong>
-          <div v-if="row.ref_type === 'sample'" class="ref-type-tag">样品单</div>
         </template>
       </el-table-column>
       <el-table-column label="供方工厂（卖方）" min-width="200" show-overflow-tooltip>
         <template #default="{ row }">
-          <strong>{{ supplierName(row) || '—' }}</strong>
+          <template v-if="!(row.is_parent && row.children?.length > 0)">
+            <strong>{{ supplierName(row) || '—' }}</strong>
+          </template>
         </template>
       </el-table-column>
       <el-table-column label="含税采购总额(¥)" width="170" align="right">
         <template #default="{ row }">
-          <strong style="color: #dc2626;">¥{{ formatMoney(row.cny_purchase_cost || 0) }}</strong>
+          <template v-if="!(row.is_parent && row.children?.length > 0)">
+            <strong style="color: #dc2626;">¥{{ formatMoney(row.cny_purchase_cost || 0) }}</strong>
+          </template>
         </template>
       </el-table-column>
       <el-table-column label="交货期限与地点" min-width="220">
         <template #default="{ row }">
-          <div>{{ parseDoc(row.purchase_contract).delivery_deadline || '合同签订后30天内' }}</div>
-          <div class="sub-text">{{ parseDoc(row.purchase_contract).delivery_location || '' }}</div>
+          <template v-if="!(row.is_parent && row.children?.length > 0)">
+            <div>{{ parseDoc(row.purchase_contract).delivery_deadline || '合同签订后30天内' }}</div>
+            <div class="sub-text">{{ parseDoc(row.purchase_contract).delivery_location || '' }}</div>
+          </template>
         </template>
       </el-table-column>
       <el-table-column label="合同预览与导出" width="180" align="center">
         <template #default="{ row }">
-          <el-button type="warning" size="small" @click="openPreview(row)">📄 预览购销合同</el-button>
+          <el-button v-if="!(row.is_parent && row.children?.length > 0)" type="warning" size="small" @click="openPreview(row)">📄 预览购销合同</el-button>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="100" align="center" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="canMaintain" link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="canMaintain && !(row.is_parent && row.children?.length > 0)" link type="primary" @click="openEdit(row)">编辑</el-button>
         </template>
       </el-table-column>
       <template #empty>暂无订单数据，请先在外销订单中创建订单</template>
@@ -82,6 +88,13 @@
       top="3vh"
     >
       <el-form ref="editFormRef" :model="editForm" label-position="top">
+        <!-- 子合同选择器（多供应商订单才显示） -->
+        <el-form-item v-if="editForm.sub_contracts && editForm.sub_contracts.length > 0" label="当前编辑的子合同">
+          <el-select v-model="editForm.active_sub_index" placeholder="选择子合同" style="width: 100%">
+            <el-option v-for="(sc, i) in editForm.sub_contracts" :key="i"
+              :label="`${sc.contract_no} - ${sc.supplier_name || '未指定供应商'}`" :value="i" />
+          </el-select>
+        </el-form-item>
         <!-- 合同编号 + 签订日期 -->
         <el-row :gutter="16">
           <el-col :span="12">
@@ -160,9 +173,14 @@
                 <el-input-number v-model="row.cost_cny" size="small" :min="0" :precision="2" :controls="false" style="width: 100%" />
               </template>
             </el-table-column>
-            <el-table-column label="数量（台）" width="120">
+            <el-table-column label="数量" width="100">
               <template #default="{ row }">
                 <el-input-number v-model="row.qty" size="small" :min="0" :controls="false" style="width: 100%" />
+              </template>
+            </el-table-column>
+            <el-table-column label="单位" width="90">
+              <template #default="{ row }">
+                <el-input v-model="row.unit" size="small" maxlength="6" placeholder="如 台/个/箱" />
               </template>
             </el-table-column>
             <el-table-column label="小计（元）" width="140" align="right">
@@ -178,7 +196,7 @@
           </el-table>
           <div class="items-total">
             <span>总计</span>
-            <span>数量：<strong>{{ editTotalQty }}</strong> 台</span>
+            <span>数量：<strong>{{ editTotalQty }}</strong> {{ editUnit }}</span>
             <span>金额（小写）：<strong style="color: #dc2626;">¥{{ formatMoney(editTotalAmount) }}</strong></span>
             <span>金额（大写）：人民币 {{ numberToChineseRMB(editTotalAmount) }}</span>
           </div>
@@ -188,16 +206,7 @@
         <div class="terms-section">
           <strong class="terms-title">三、质量要求与检测</strong>
           <div class="terms-item">
-            <label>1.</label>
-            <el-input v-model="editForm.quality_req_1" type="textarea" :rows="2" />
-          </div>
-          <div class="terms-item">
-            <label>2.</label>
-            <el-input v-model="editForm.quality_req_2" type="textarea" :rows="2" />
-          </div>
-          <div class="terms-item">
-            <label>3.</label>
-            <el-input v-model="editForm.quality_req_3" type="textarea" :rows="2" />
+            <el-input v-model="editForm.quality_notes" type="textarea" :rows="6" placeholder="质量要求与检测内容" />
           </div>
         </div>
 
@@ -228,28 +237,21 @@
           <strong class="terms-title">五、结算条款</strong>
           <el-row :gutter="12">
             <el-col :span="12">
-              <el-form-item label="1. 付款方式">
-                <el-input v-model="editForm.payment_method" />
-              </el-form-item>
-            </el-col>
-            <el-col :span="12">
-              <el-form-item label="2. 发票">
-                <el-input v-model="editForm.invoice_clause" />
-              </el-form-item>
-            </el-col>
-            <el-col :span="8">
-              <el-form-item label="收款人">
-                <el-input v-model="editForm.payee_name" />
-              </el-form-item>
-            </el-col>
-            <el-col :span="8">
-              <el-form-item label="收款账户">
-                <el-input v-model="editForm.payee_account" />
-              </el-form-item>
-            </el-col>
-            <el-col :span="8">
-              <el-form-item label="收款银行">
-                <el-input v-model="editForm.payee_bank" />
+              <el-form-item label="收款方式">
+                <el-select
+                  v-model="editForm.payment_route_type"
+                  filterable clearable
+                  placeholder="选择供应方收款资料中的路线类型"
+                  style="width: 100%"
+                  @change="onPaymentRouteChange"
+                >
+                  <el-option
+                    v-for="r in paymentRouteOptions"
+                    :key="r.route_type"
+                    :label="r.route_type"
+                    :value="r.route_type"
+                  />
+                </el-select>
               </el-form-item>
             </el-col>
           </el-row>
@@ -259,12 +261,7 @@
         <div class="terms-section">
           <strong class="terms-title">六、其他条款</strong>
           <div class="terms-item">
-            <label>1.</label>
-            <el-input v-model="editForm.other_clause_1" type="textarea" :rows="2" />
-          </div>
-          <div class="terms-item">
-            <label>2.</label>
-            <el-input v-model="editForm.other_clause_2" type="textarea" :rows="2" />
+            <el-input v-model="editForm.other_clauses" type="textarea" :rows="4" placeholder="其他条款内容" />
           </div>
         </div>
       </el-form>
@@ -278,7 +275,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, computed } from 'vue'
+import { onMounted, reactive, ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Printer, Download, Close } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
@@ -304,6 +301,57 @@ const filteredList = computed(() => {
 const supplierOptions = ref([])
 const companySettings = ref({})
 
+// 三、质量要求与检测 / 六、其他条款 默认模板（多行文本，可自由编辑）
+const QUALITY_NOTES_DEFAULT = [
+  '1. 乙方需按上述规格参数生产，产品需符合《电子秤通用技术规范》（GB/T 7722-2017），且满足防水、称重精准等核心功能要求；',
+  '2. 乙方需对所有样品进行全检（含功能测试、外观检查），确保"检测没问题"后再打包，甲方有权抽检，若发现不合格品，乙方需免费更换；',
+  '3. 样品需附带产品合格检测报告（每台对应检测记录）。'
+].join('\n')
+const OTHER_CLAUSES_DEFAULT = [
+  '1. 本合同一式两份，甲乙双方各执一份，签字盖章后生效；',
+  '2. 未尽事宜，双方协商解决；协商不成的，向永康人民法院提起诉讼。'
+].join('\n')
+
+// 旧数据兼容：历史合同存的是 quality_req_1/2/3、other_clause_1/2 编号字段，合并为多行文本
+function legacyQualityNotes(obj = {}) {
+  const vals = [obj.quality_req_1, obj.quality_req_2, obj.quality_req_3].filter(v => v && String(v).trim())
+  return vals.map((v, i) => `${i + 1}. ${v}`).join('\n')
+}
+function legacyOtherClauses(obj = {}) {
+  const vals = [obj.other_clause_1, obj.other_clause_2].filter(v => v && String(v).trim())
+  return vals.map((v, i) => `${i + 1}. ${v}`).join('\n')
+}
+// 当前供应商的收款资料路线库（供收款方式下拉用）
+const supplierBankInfo = reactive({ routes: [] })
+
+// 收款方式下拉选项：取供应商收款资料中的路线类型（去重）
+const paymentRouteOptions = computed(() => {
+  const seen = new Set()
+  return supplierBankInfo.routes.filter(r => {
+    const type = (r.route_type || '').trim()
+    if (!type || seen.has(type)) return false
+    seen.add(type)
+    return true
+  })
+})
+
+// 选择收款方式后，把该路线的路由备注带出（随合同一起保存）
+function onPaymentRouteChange(routeType) {
+  const route = supplierBankInfo.routes.find(r => (r.route_type || '').trim() === routeType)
+  editForm.value.payment_routing_note = route ? (route.routing_note || '') : ''
+}
+
+// 加载指定供应商的收款资料路线库（el-select 数据源），返回供应商详情
+async function loadSupplierBankInfo(supplierId) {
+  supplierBankInfo.routes = []
+  if (!supplierId) return null
+  try {
+    const s = await getSupplier(supplierId)
+    supplierBankInfo.routes = (s.bank_accounts || []).filter(r => r && (r.route_type || '').trim())
+    return s
+  } catch { return null }
+}
+
 // 预览
 const previewVisible = ref(false)
 const previewHtml = ref('')
@@ -319,33 +367,24 @@ const editingRefType = ref('order')
 
 // 编辑区采购总额（数量小计 + 金额小计）
 const editTotalQty = computed(() => editItems.value.reduce((s, it) => s + Number(it.qty || 0), 0))
+const editUnit = computed(() => editItems.value.find(it => it.unit)?.unit || '台')
 const editTotalAmount = computed(() => editItems.value.reduce((s, it) => s + Number(it.qty || 0) * Number(it.cost_cny || 0), 0))
 
-// 选择乙方时自动回填乙方信息（信用代码/地址/收款人/收款账号/收款银行）
+// 选择乙方时自动回填乙方信息（信用代码/地址）
 // 始终拉取最新供应商详情，确保信用代码等字段为最新值
+// 同时加载收款资料路线库到 supplierBankInfo（供收款方式下拉用）
 async function onSupplierChange(supplierId) {
-  const s = supplierOptions.value.find(x => x.id === supplierId)
-  if (!s) return
-  // 回填乙方名称
-  if (!editForm.value.supplier_name) editForm.value.supplier_name = s.name || ''
-  try {
-    // 拉取最新供应商详情（含 credit_code / contacts 等完整字段）
-    const detail = await getSupplier(supplierId)
-    if (!editForm.value.supplier_credit_code) editForm.value.supplier_credit_code = detail.credit_code || ''
-    if (!editForm.value.supplier_address) editForm.value.supplier_address = detail.factory_address || ''
-    if (!editForm.value.payee_account) editForm.value.payee_account = detail.account_number || ''
-    if (!editForm.value.payee_bank) editForm.value.payee_bank = detail.bank_name || ''
-    // 收款人默认取供应商第一个关联联系人
-    if (!editForm.value.payee_name) {
-      const contacts = detail.contacts || []
-      if (contacts.length) editForm.value.payee_name = contacts[0].name || ''
-    }
-  } catch {
-    // 回退到 supplierOptions 数据
-    if (!editForm.value.supplier_credit_code) editForm.value.supplier_credit_code = s.credit_code || ''
-    if (!editForm.value.supplier_address) editForm.value.supplier_address = s.factory_address || ''
-    if (!editForm.value.payee_account) editForm.value.payee_account = s.account_number || ''
-    if (!editForm.value.payee_bank) editForm.value.payee_bank = s.bank_name || ''
+  const detail = await loadSupplierBankInfo(supplierId)
+  const s = supplierOptions.value.find(x => x.id === supplierId) || {}
+  if (!detail && !s.id) return
+  if (!editForm.value.supplier_name) editForm.value.supplier_name = s.name || detail?.name || ''
+  if (!editForm.value.supplier_credit_code) editForm.value.supplier_credit_code = detail?.credit_code || s.credit_code || ''
+  if (!editForm.value.supplier_address) editForm.value.supplier_address = detail?.factory_address || s.factory_address || ''
+  // 切换供应商后，原收款方式若不在新供应商的收款资料中则清空
+  if (editForm.value.payment_route_type &&
+      !supplierBankInfo.routes.some(r => (r.route_type || '').trim() === editForm.value.payment_route_type)) {
+    editForm.value.payment_route_type = ''
+    editForm.value.payment_routing_note = ''
   }
 }
 
@@ -360,17 +399,27 @@ function parseDoc(val) {
 
 /* ========== 列表派生字段 ========== */
 function contractNo(row) {
+  // 子合同行：直接返回子合同编号
+  if (row.is_sub && row.sub_contract) return row.sub_contract.contract_no
   const pc = parseDoc(row.purchase_contract)
   const refNo = row.ref_number || row.pi_number || row.sample_number || ''
-  return pc.contract_no || (refNo ? refNo + '-CG' : '—')
+  return pc.contract_no || (refNo ? refNo + 'GX' : '—')
 }
 function supplierName(row) {
   if (row.supplier_name) return row.supplier_name
-  const s = supplierOptions.value.find(x => x.id === row.supplier_id)
-  return s ? s.name : ''
+  // 单供应商样品单：回退到合同 JSON 中的 supplier_name
+  const pc = parseDoc(row.purchase_contract)
+  if (pc.supplier_name) return pc.supplier_name
+  if (row.is_sub && row.sub_contract?.supplier_name) return row.sub_contract.supplier_name
+  const sid = row.supplier_id || pc.supplier_id
+  if (sid) {
+    const s = supplierOptions.value.find(x => x.id === sid)
+    if (s) return s.name
+  }
+  return ''
 }
 
-/* ========== 数据加载（合并外销订单 + 样品单） ========== */
+/* ========== 数据加载（合并外销订单 + 样品单，构造子合同树） ========== */
 async function loadList() {
   loading.value = true
   try {
@@ -383,10 +432,39 @@ async function loadList() {
     const ds = await listSamples({ page: 1, pageSize: 500 })
     const sampleList = (ds.list || []).map((s) => ({ ...s, ref_type: 'sample', ref_number: s.sample_number }))
     // 3. 合并：按创建时间倒序
-    list.value = [...orderList, ...sampleList].sort((a, b) => {
+    const merged = [...orderList, ...sampleList].sort((a, b) => {
       const ta = new Date(a.created_at || a.signing_date || 0).getTime()
       const tb = new Date(b.created_at || b.signing_date || 0).getTime()
       return tb - ta
+    })
+    // 4. 构造树形：多供应商订单生成子合同虚拟行
+    list.value = merged.map((row) => {
+      const pc = parseDoc(row.purchase_contract)
+      const rowKey = `${row.ref_type}-${row.id || row.ref_number}`
+      const subs = Array.isArray(pc.sub_contracts) ? pc.sub_contracts : []
+      if (subs.length > 0) {
+        return {
+          ...row,
+          rowKey,
+          is_parent: true,
+          children: subs.map((sc, i) => ({
+            ...row,
+            rowKey: `${rowKey}-sub-${i}`,
+            is_sub: true,
+            sub_contract: sc,
+            supplier_id: sc.supplier_id,
+            supplier_name: sc.supplier_name,
+            sub_index: i
+          }))
+        }
+      }
+      // 单供应商：从合同 JSON 补充供应商信息（样品单表 JOIN 无供应商时回退）
+      return {
+        ...row,
+        rowKey,
+        supplier_id: row.supplier_id || pc.supplier_id || null,
+        supplier_name: row.supplier_name || pc.supplier_name || ''
+      }
     })
   } catch { /* 拦截器 */ }
   finally { loading.value = false }
@@ -414,36 +492,61 @@ async function openPreview(row) {
     currentOrder.value = { ...detail, ref_number: row.ref_number, ref_type: row.ref_type }
     const company = companySettings.value || {}
     const supplier = supplierOptions.value.find(s => s.id === detail.supplier_id) || {}
-    previewHtml.value = buildContractHtml(currentOrder.value, company, supplier)
+    // 子合同行：传入 sub_contract 用于过滤明细和替换乙方信息
+    const subContract = row.is_sub ? row.sub_contract : null
+    previewHtml.value = buildContractHtml(currentOrder.value, company, supplier, subContract)
     previewVisible.value = true
   } catch { /* 拦截器 */ }
 }
 
-function buildContractHtml(order, company, supplier) {
+function buildContractHtml(order, company, supplier, subContract) {
   const pc = parseDoc(order.purchase_contract)
-  const items = order.items || []
+  let items = order.items || []
+  // 子合同预览：优先用 product_ids 快照过滤（归类后固定，不受产品库 supplier_id 变化影响）
+  // 大合同（subContract 为 null）则关联全部产品
+  if (subContract) {
+    const pids = Array.isArray(subContract.product_ids) ? subContract.product_ids.filter(Boolean) : []
+    if (pids.length > 0) {
+      const idSet = new Set(pids.map(id => Number(id)))
+      items = items.filter(it => idSet.has(Number(it.product_id)))
+    } else if (subContract.supplier_id !== null && subContract.supplier_id !== undefined) {
+      // 旧数据无 product_ids 快照时回退按 supplier_id 过滤
+      const sid = Number(subContract.supplier_id)
+      items = items.filter(it => Number(it.product_supplier_id) === sid)
+    } else {
+      // supplier_id 也为空：只显示自定义产品
+      items = items.filter(it => !it.product_id)
+    }
+  }
   // 采购总额 = Σ(数量 × 单价)
   const cnyTotal = items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.cost_cny || 0), 0)
   const totalQty = items.reduce((s, it) => s + Number(it.qty || 0), 0)
-  const contractNo = pc.contract_no || ((order.ref_number || order.pi_number || '') + '-CG')
-  const signDate = (pc.sign_date || order.signing_date || '').slice(0, 10)
+  const contractNo = subContract?.contract_no || pc.contract_no || ((order.ref_number || order.pi_number || '') + 'GX')
+  const signDate = (subContract?.sign_date || pc.sign_date || order.signing_date || '').slice(0, 10)
 
   // 甲方信息：优先取合同保存值，回退 companySettings
   const buyerName = pc.buyer_name || company.name_cn || ''
   const buyerCreditCode = pc.buyer_credit_code || company.tax_number || ''
   const buyerAddress = pc.buyer_address || company.address_cn || ''
-  // 乙方信息：优先取合同保存值，回退 supplier
-  const supplierNameVal = pc.supplier_name || supplier.name || ''
-  const supplierCreditCode = pc.supplier_credit_code || supplier.credit_code || ''
-  const supplierAddressVal = pc.supplier_address || supplier.factory_address || ''
+  // 乙方信息：子合同优先，回退主合同，再回退 supplier
+  const supplierNameVal = subContract?.supplier_name || pc.supplier_name || supplier.name || ''
+  const supplierCreditCode = subContract?.supplier_credit_code || pc.supplier_credit_code || supplier.credit_code || ''
+  const supplierAddressVal = subContract?.supplier_address || pc.supplier_address || supplier.factory_address || ''
+
+  // 文档字段统一来源：子合同优先，回退主合同
+  const doc = subContract || pc
+  // 质量要求/其他条款：多行文本字段，旧数据回退合并编号字段
+  const qualityNotesText = doc.quality_notes || legacyQualityNotes(doc) || QUALITY_NOTES_DEFAULT
+  const otherClausesText = doc.other_clauses || legacyOtherClauses(doc) || OTHER_CLAUSES_DEFAULT
 
   // 商品行：产品型号优先用 supplier_model(our_model)，回退 model
   const itemRows = items.map((it, idx) => {
     const model = it.supplier_model || it.model || ''
     const qty = Number(it.qty || 0)
+    const unit = it.unit || '台'
     const price = Number(it.cost_cny || 0)
     const subtotal = qty * price
-    return `<tr><td style="border:0.5px solid #999; padding:6px 8px; text-align:center;">${idx + 1}</td><td style="border:0.5px solid #999; padding:6px 8px;">${model}</td><td style="border:0.5px solid #999; padding:6px 8px; text-align:right;">${formatMoney(price)}</td><td style="border:0.5px solid #999; padding:6px 8px; text-align:right;">${qty}</td><td style="border:0.5px solid #999; padding:6px 8px; text-align:right; font-weight:bold;">${formatMoney(subtotal)}</td></tr>`
+    return `<tr><td style="border:0.5px solid #999; padding:6px 8px; text-align:center;">${idx + 1}</td><td style="border:0.5px solid #999; padding:6px 8px;">${model}</td><td style="border:0.5px solid #999; padding:6px 8px; text-align:right;">${formatMoney(price)}</td><td style="border:0.5px solid #999; padding:6px 8px; text-align:right;">${qty}</td><td style="border:0.5px solid #999; padding:6px 8px; text-align:center;">${unit}</td><td style="border:0.5px solid #999; padding:6px 8px; text-align:right; font-weight:bold;">${formatMoney(subtotal)}</td></tr>`
   }).join('')
 
   const contractSeal = company.contract_seal_img || ''
@@ -478,7 +581,8 @@ function buildContractHtml(order, company, supplier) {
         <th style="border:0.5px solid #999; padding:6px 8px; text-align:center; width:50px; background:#fff;">序号</th>
         <th style="border:0.5px solid #999; padding:6px 8px; text-align:center; background:#fff;">产品型号</th>
         <th style="border:0.5px solid #999; padding:6px 8px; text-align:center; width:120px; background:#fff;">单价（元）</th>
-        <th style="border:0.5px solid #999; padding:6px 8px; text-align:center; width:110px; background:#fff;">数量（台）</th>
+        <th style="border:0.5px solid #999; padding:6px 8px; text-align:center; width:80px; background:#fff;">数量</th>
+        <th style="border:0.5px solid #999; padding:6px 8px; text-align:center; width:70px; background:#fff;">单位</th>
         <th style="border:0.5px solid #999; padding:6px 8px; text-align:center; width:130px; background:#fff;">小计（元）</th>
       </tr></thead>
       <tbody>${itemRows}</tbody>
@@ -486,6 +590,7 @@ function buildContractHtml(order, company, supplier) {
         <td colspan="2" style="border:0.5px solid #999; padding:6px 8px; text-align:right; font-weight:bold;">总计</td>
         <td style="border:0.5px solid #999; padding:6px 8px;"></td>
         <td style="border:0.5px solid #999; padding:6px 8px; text-align:right; font-weight:bold;">${totalQty}</td>
+        <td style="border:0.5px solid #999; padding:6px 8px; text-align:center; font-weight:bold;">${items[0]?.unit || ''}</td>
         <td style="border:0.5px solid #999; padding:6px 8px; text-align:right; font-weight:bold;">${formatMoney(cnyTotal)}</td>
       </tr></tfoot>
     </table>
@@ -493,31 +598,24 @@ function buildContractHtml(order, company, supplier) {
 
     <div style="font-size:14px; line-height:1.6; margin-top:12px;">
       <div style="font-weight:bold; margin-bottom:4px;">三、质量要求与检测</div>
-      <div>1. ${pc.quality_req_1 || ''}</div>
-      <div>2. ${pc.quality_req_2 || ''}</div>
-      <div>3. ${pc.quality_req_3 || ''}</div>
+      <div style="white-space:pre-wrap;">${qualityNotesText}</div>
     </div>
 
     <div style="font-size:14px; line-height:1.6; margin-top:12px;">
       <div style="font-weight:bold; margin-bottom:4px;">四、交货条款</div>
-      <div>1. 交货地点：${pc.delivery_location || ''}</div>
-      <div>2. 交货时间：${pc.delivery_time || ''}</div>
-      <div>3. 包装要求：${pc.packing_req || ''}</div>
+      <div>1. 交货地点：${doc.delivery_location || ''}</div>
+      <div>2. 交货时间：${doc.delivery_time || ''}</div>
+      <div>3. 包装要求：${doc.packing_req || ''}</div>
     </div>
 
     <div style="font-size:14px; line-height:1.6; margin-top:12px;">
       <div style="font-weight:bold; margin-bottom:4px;">五、结算条款</div>
-      <div>1. 付款方式：${pc.payment_method || ''}</div>
-      <div style="padding-left:2em;">收款人：${pc.payee_name || ''}</div>
-      <div style="padding-left:2em;">收款账户：${pc.payee_account || ''}</div>
-      <div style="padding-left:2em;">收款银行：${pc.payee_bank || ''}</div>
-      <div>2. 发票：${pc.invoice_clause || ''}</div>
+      ${doc.payment_routing_note ? `<div style="white-space:pre-wrap;">${doc.payment_routing_note}</div>` : ''}
     </div>
 
     <div style="font-size:14px; line-height:1.6; margin-top:12px;">
       <div style="font-weight:bold; margin-bottom:4px;">六、其他条款</div>
-      <div>1. ${pc.other_clause_1 || ''}</div>
-      <div>2. ${pc.other_clause_2 || ''}</div>
+      <div style="white-space:pre-wrap;">${otherClausesText}</div>
     </div>
 
     <div style="display:flex; justify-content:space-between; font-size:14px; margin-top:24px;">
@@ -543,6 +641,68 @@ function onExportExcel() {
 }
 
 /* ========== 编辑（与订单明细/预览联动，仿参考项目 savePurchaseContractData） ========== */
+// 把指定子合同的字段加载到 editForm 顶层（便于复用现有表单绑定）
+async function loadSubContractToForm(idx) {
+  const sc = editForm.value.sub_contracts[idx]
+  if (!sc) return
+  // 子合同字段覆盖顶层（保留 buyer_* 甲方信息不变，因为甲方是同一家）
+  editForm.value.contract_no = sc.contract_no || editForm.value.contract_no
+  editForm.value.supplier_id = sc.supplier_id || editForm.value.supplier_id
+  editForm.value.supplier_name = sc.supplier_name || ''
+  editForm.value.supplier_credit_code = sc.supplier_credit_code || ''
+  editForm.value.supplier_address = sc.supplier_address || ''
+  editForm.value.sign_date = (sc.sign_date || editForm.value.sign_date || '').slice(0, 10)
+  editForm.value.quality_notes = sc.quality_notes || legacyQualityNotes(sc) || editForm.value.quality_notes
+  editForm.value.delivery_location = sc.delivery_location || editForm.value.delivery_location
+  editForm.value.delivery_time = sc.delivery_time || editForm.value.delivery_time
+  editForm.value.packing_req = sc.packing_req || editForm.value.packing_req
+  editForm.value.payment_route_type = sc.payment_route_type || ''
+  editForm.value.payment_routing_note = sc.payment_routing_note || ''
+  editForm.value.other_clauses = sc.other_clauses || legacyOtherClauses(sc) || editForm.value.other_clauses
+  // 同步加载子合同供应商的收款资料路线库（收款方式下拉用）
+  if (sc.supplier_id) await loadSupplierBankInfo(sc.supplier_id)
+}
+
+// 按子合同过滤明细行（用于子合同编辑时只显示该供应商的产品）
+// 优先用 product_ids 快照（归类后固定），无快照时回退 supplier_id
+function filterItemsBySub(allItems, subContract) {
+  let filtered
+  if (!subContract) {
+    // 大合同：关联全部产品
+    filtered = allItems || []
+  } else {
+    const pids = Array.isArray(subContract.product_ids) ? subContract.product_ids.filter(Boolean) : []
+    if (pids.length > 0) {
+      const idSet = new Set(pids.map(id => Number(id)))
+      filtered = (allItems || []).filter(it => idSet.has(Number(it.product_id)))
+    } else if (subContract.supplier_id !== null && subContract.supplier_id !== undefined) {
+      // 旧数据无 product_ids 快照时回退按 supplier_id 过滤
+      const sid = Number(subContract.supplier_id)
+      filtered = (allItems || []).filter(it => Number(it.product_supplier_id) === sid)
+    } else {
+      // supplier_id 也为空：只显示自定义产品
+      filtered = (allItems || []).filter(it => !it.product_id)
+    }
+  }
+  editItems.value = filtered.map(it => ({
+    ...it,
+    supplier_model: it.supplier_model || it.model || '',
+    qty: Number(it.qty || 0),
+    unit: it.unit || '台',
+    cost_cny: it.cost_cny === null || it.cost_cny === undefined || it.cost_cny === ''
+      ? Number(it.product_purchase_cost || 0)
+      : Number(it.cost_cny)
+  }))
+}
+
+// 切换子合同时重新加载字段和明细（需保留 detail.items 缓存以过滤）
+const detailItemsCache = ref([])
+watch(() => editForm.value.active_sub_index, (idx) => {
+  if (idx === null || idx === undefined) return
+  loadSubContractToForm(idx)
+  filterItemsBySub(detailItemsCache.value, editForm.value.sub_contracts[idx])
+})
+
 async function openEdit(row) {
   try {
     const detail = row.ref_type === 'sample'
@@ -558,9 +718,11 @@ async function openEdit(row) {
     let supplier = supplierOpt
     if (detail.supplier_id) {
       try { supplier = await getSupplier(detail.supplier_id) } catch { /* 回退 supplierOptions */ }
+      // 同步加载供应商收款资料路线库（收款方式下拉用）
+      await loadSupplierBankInfo(detail.supplier_id)
     }
     editForm.value = {
-      contract_no: pc.contract_no || (refNo + '-CG'),
+      contract_no: pc.contract_no || (refNo + 'GX'),
       sign_date: (pc.sign_date || detail.signing_date || '').slice(0, 10),
       // 一、合同双方
       buyer_name: pc.buyer_name || co.name_cn || '',
@@ -570,38 +732,52 @@ async function openEdit(row) {
       supplier_name: pc.supplier_name || supplier.name || '',
       supplier_credit_code: pc.supplier_credit_code || supplier.credit_code || '',
       supplier_address: pc.supplier_address || supplier.factory_address || '',
-      // 三、质量要求与检测（按模板默认）
-      quality_req_1: pc.quality_req_1 || '乙方需按上述规格参数生产，产品需符合《电子秤通用技术规范》（GB/T 7722-2017），且满足防水、称重精准等核心功能要求；',
-      quality_req_2: pc.quality_req_2 || '乙方需对所有样品进行全检（含功能测试、外观检查），确保"检测没问题"后再打包，甲方有权抽检，若发现不合格品，乙方需免费更换；',
-      quality_req_3: pc.quality_req_3 || '样品需附带产品合格检测报告（每台对应检测记录）。',
+      // 三、质量要求与检测（多行文本，旧数据回退合并编号字段）
+      quality_notes: pc.quality_notes || legacyQualityNotes(pc) || QUALITY_NOTES_DEFAULT,
       // 四、交货条款
       delivery_location: pc.delivery_location || '甲方指定地址',
       delivery_time: pc.delivery_time || '合同签订后30天内',
       packing_req: pc.packing_req || '采用出口标准包装（防水、防摔），外箱标注"样品""易碎"标识。',
-      // 五、结算条款
-      payment_method: pc.payment_method || '验货完成后全额付款',
-      payee_name: pc.payee_name || '',
-      payee_account: pc.payee_account || supplier.account_number || '',
-      payee_bank: pc.payee_bank || supplier.bank_name || '',
-      invoice_clause: pc.invoice_clause || '以上价格是出厂不含税价格',
-      // 六、其他条款（按模板默认）
-      other_clause_1: pc.other_clause_1 || '本合同一式两份，甲乙双方各执一份，签字盖章后生效；',
-      other_clause_2: pc.other_clause_2 || '未尽事宜，双方协商解决；协商不成的，向永康人民法院提起诉讼。'
+      // 五、结算条款（收款方式：供应方收款资料路线库）
+      payment_route_type: pc.payment_route_type || '',
+      payment_routing_note: pc.payment_routing_note || '',
+      // 六、其他条款（多行文本，旧数据回退合并编号字段）
+      other_clauses: pc.other_clauses || legacyOtherClauses(pc) || OTHER_CLAUSES_DEFAULT,
+      // 子合同数组（多供应商拆分时使用）
+      sub_contracts: Array.isArray(pc.sub_contracts) ? pc.sub_contracts : [],
+      active_sub_index: null
     }
-    // 收款人默认取供应商第一个关联联系人（仅在未保存时）
-    if (!pc.payee_name && supplier.contacts && supplier.contacts.length) {
-      editForm.value.payee_name = supplier.contacts[0].name || ''
+    // 多供应商：缓存明细用于子合同切换时重新过滤
+    detailItemsCache.value = detail.items || []
+    if (row.is_sub && row.sub_contract && row.sub_index !== undefined) {
+      // 子合同模式：加载用户点击的子合同，并按其 product_ids/supplier_id 过滤明细
+      editForm.value.active_sub_index = row.sub_index
+      loadSubContractToForm(row.sub_index)
+      filterItemsBySub(detail.items || [], row.sub_contract)
+    } else if (editForm.value.sub_contracts.length > 0) {
+      // 大合同模式：关联全部产品，子合同选择器可选切换
+      editForm.value.active_sub_index = null
+      editItems.value = (detail.items || []).map(it => ({
+        ...it,
+        supplier_model: it.supplier_model || it.model || '',
+        qty: Number(it.qty || 0),
+        unit: it.unit || '台',
+        cost_cny: it.cost_cny === null || it.cost_cny === undefined || it.cost_cny === ''
+          ? Number(it.product_purchase_cost || 0)
+          : Number(it.cost_cny)
+      }))
+    } else {
+      // 单供应商：明细全部显示
+      editItems.value = (detail.items || []).map(it => ({
+        ...it,
+        supplier_model: it.supplier_model || it.model || '',
+        qty: Number(it.qty || 0),
+        unit: it.unit || '台',
+        cost_cny: it.cost_cny === null || it.cost_cny === undefined || it.cost_cny === ''
+          ? Number(it.product_purchase_cost || 0)
+          : Number(it.cost_cny)
+      }))
     }
-    // 明细行：产品型号优先 supplier_model(our_model)，回退 model；单价优先已保存采购价，为空回退产品库采购价（不回退外销价）
-    editItems.value = (detail.items || []).map(it => ({
-      ...it,
-      supplier_model: it.supplier_model || it.model || '',
-      qty: Number(it.qty || 0),
-      unit: it.unit || '台',
-      cost_cny: it.cost_cny === null || it.cost_cny === undefined || it.cost_cny === ''
-        ? Number(it.product_purchase_cost || 0)
-        : Number(it.cost_cny)
-    }))
     editVisible.value = true
   } catch { /* 拦截器 */ }
 }
@@ -622,15 +798,17 @@ async function onSave() {
 
   saving.value = true
   try {
-    // 联动重算：箱数、外销小计、订单外销总额（qty 或装箱变化时同步）
+    // 联动重算：合同明细独立用 cost_cny（采购价）算 subtotal，并同步到 price
     const items = editItems.value.map(it => {
       const qty = Number(it.qty || 0)
       const pcs = Number(it.pcs_per_ctn || 0)
-      const row = { ...it, qty }
-      // 同步 supplier_model 到 model 字段，保证其他单据读取一致
-      if (it.supplier_model) row.model = it.supplier_model
+      // 产品型号：supplier_model（供应商型号）优先，空则用自编号 model，都空留空让后端也能保存
+      const model = it.supplier_model || it.model || ''
+      // 单价：cost_cny（采购价）优先，price（外销价）回退
+      const price = Number(it.cost_cny || it.price || 0)
+      const row = { ...it, model, qty, price, cost_cny: price }
       if (pcs > 0) row.ctns = Math.ceil(qty / pcs)
-      row.subtotal_amount = Number((qty * Number(it.price || 0)).toFixed(2))
+      row.subtotal_amount = Number((qty * price).toFixed(2))
       return row
     })
     const totalAmount = Number(items.reduce((s, it) => s + Number(it.qty || 0) * Number(it.price || 0), 0).toFixed(2))
@@ -638,35 +816,42 @@ async function onSave() {
     // 找到乙方对象，回写乙方名称到合同 JSON
     const supplier = supplierOptions.value.find(s => s.id === editForm.value.supplier_id) || {}
 
+    // 构造合同字段对象（顶层）
+    const pcFields = {
+      contract_no: editForm.value.contract_no,
+      sign_date: editForm.value.sign_date,
+      buyer_name: editForm.value.buyer_name,
+      buyer_credit_code: editForm.value.buyer_credit_code,
+      buyer_address: editForm.value.buyer_address,
+      supplier_name: editForm.value.supplier_name || supplier.name || '',
+      supplier_credit_code: editForm.value.supplier_credit_code,
+      supplier_address: editForm.value.supplier_address,
+      quality_notes: editForm.value.quality_notes,
+      delivery_location: editForm.value.delivery_location,
+      delivery_time: editForm.value.delivery_time,
+      packing_req: editForm.value.packing_req,
+      payment_route_type: editForm.value.payment_route_type,
+      payment_routing_note: editForm.value.payment_routing_note,
+      other_clauses: editForm.value.other_clauses
+    }
+
+    // 多供应商：把当前顶层字段同步回 sub_contracts[active_sub_index]
+    const subs = editForm.value.sub_contracts || []
+    const activeIdx = editForm.value.active_sub_index
+    if (subs.length > 0 && activeIdx !== null && activeIdx !== undefined && subs[activeIdx]) {
+      Object.assign(subs[activeIdx], pcFields, {
+        contract_no: editForm.value.contract_no,
+        supplier_id: editForm.value.supplier_id,
+        supplier_name: editForm.value.supplier_name || supplier.name || ''
+      })
+    }
+
     await (editingRefType.value === 'sample' ? updateSample : updateOrder)(editingOrderId.value, {
       supplier_id: editForm.value.supplier_id,
       purchase_contract: {
-        contract_no: editForm.value.contract_no,
-        sign_date: editForm.value.sign_date,
-        // 一、合同双方
-        buyer_name: editForm.value.buyer_name,
-        buyer_credit_code: editForm.value.buyer_credit_code,
-        buyer_address: editForm.value.buyer_address,
-        supplier_name: editForm.value.supplier_name || supplier.name || '',
-        supplier_credit_code: editForm.value.supplier_credit_code,
-        supplier_address: editForm.value.supplier_address,
-        // 三、质量要求与检测
-        quality_req_1: editForm.value.quality_req_1,
-        quality_req_2: editForm.value.quality_req_2,
-        quality_req_3: editForm.value.quality_req_3,
-        // 四、交货条款
-        delivery_location: editForm.value.delivery_location,
-        delivery_time: editForm.value.delivery_time,
-        packing_req: editForm.value.packing_req,
-        // 五、结算条款
-        payment_method: editForm.value.payment_method,
-        payee_name: editForm.value.payee_name,
-        payee_account: editForm.value.payee_account,
-        payee_bank: editForm.value.payee_bank,
-        invoice_clause: editForm.value.invoice_clause,
-        // 六、其他条款
-        other_clause_1: editForm.value.other_clause_1,
-        other_clause_2: editForm.value.other_clause_2
+        ...pcFields,
+        is_parent: subs.length > 0,
+        sub_contracts: subs
       },
       items,
       total_amount: totalAmount
@@ -685,7 +870,6 @@ onMounted(() => { loadList(); loadOptions() })
 .page-header { margin-bottom: 14px; }
 .page-title { font-size: 18px; font-weight: 700; color: #0f172a; margin: 0; }
 .sub-text { font-size: 11px; color: #94a3b8; margin-top: 2px; }
-.ref-type-tag { display: inline-block; margin-top: 2px; padding: 1px 6px; font-size: 10px; color: #fff; background: #0ea5e9; border-radius: 4px; }
 
 .doc-toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
 .doc-page { background: white; padding: 35px 40px; font-size: 11px; color: #0f172a; line-height: 1.5; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }

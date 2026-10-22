@@ -9,7 +9,7 @@
     <el-table v-loading="loading" :data="list" stripe>
       <el-table-column label="订舱托书号" width="180">
         <template #default="{ row }">
-          <strong style="color: #4f46e5;">{{ row.pi_number }}-SHP</strong>
+          <strong style="color: #4f46e5;">{{ row.pi_number }}SHP</strong>
         </template>
       </el-table-column>
       <el-table-column label="关联外销 PI" width="150">
@@ -44,7 +44,7 @@
     <!-- ========== 订舱委托书预览弹窗 ========== -->
     <el-dialog
       v-model="previewVisible" :close-on-click-modal="false"
-      :title="`BOOKING NOTE (SO) - ${previewOrder?.pi_number || ''}-SHP`"
+      :title="`BOOKING NOTE (SO) - ${previewOrder?.pi_number || ''}SHP`"
       width="1100px"
       destroy-on-close
       top="3vh"
@@ -145,22 +145,22 @@
           <el-col :span="24" class="cargo-section">
             <strong class="cargo-section-title">货物与包装明细 (可直接编辑覆盖)</strong>
             <el-row :gutter="16">
-              <el-col :span="6">
+              <el-col :span="24">
                 <el-form-item label="Marks 唛头">
-                  <el-input v-model="editForm.marks" />
+                  <el-input v-model="editForm.marks" type="textarea" :rows="2" />
                 </el-form-item>
               </el-col>
-              <el-col :span="6">
+              <el-col :span="8">
                 <el-form-item label="总件数 (CTNS)">
                   <el-input-number v-model="editForm.ctns" :min="0" :controls="false" style="width: 100%" />
                 </el-form-item>
               </el-col>
-              <el-col :span="6">
+              <el-col :span="8">
                 <el-form-item label="总毛重 (KGS)">
                   <el-input-number v-model="editForm.gw" :min="0" :precision="1" :controls="false" style="width: 100%" />
                 </el-form-item>
               </el-col>
-              <el-col :span="6">
+              <el-col :span="8">
                 <el-form-item label="总体积 (CBM)">
                   <el-input-number v-model="editForm.cbm" :min="0" :precision="3" :step="0.001" :controls="false" style="width: 100%" />
                 </el-form-item>
@@ -283,7 +283,7 @@ async function openPreview(row) {
 }
 
 function onPrint() {
-  printDocument(previewHtml.value, `BOOKING NOTE - ${previewOrder.value?.pi_number || ''}-SHP`)
+  printDocument(previewHtml.value, `BOOKING NOTE - ${previewOrder.value?.pi_number || ''}SHP`)
 }
 
 function onExportExcel() {
@@ -291,6 +291,13 @@ function onExportExcel() {
 }
 
 /* ========== 编辑托书信息（仿参考项目 openBookingModal / saveBookingData） ========== */
+// 货物描述行：品名 (型号) - 数量 PCS，后接 HS 编码（明细无编码时回退产品库）
+function descLineWithHs(it = {}) {
+  const base = `${it.name_en || ''} (${it.model || ''}) - ${it.qty || 0} PCS`
+  const hs = String(it.hs_code || it.product_hs_code || '').trim()
+  return hs ? `${base} / HS: ${hs}` : base
+}
+
 async function openEdit(row) {
   try {
     const detail = await getOrder(row.id)
@@ -302,7 +309,7 @@ async function openEdit(row) {
     const defaultShipper = `${company.name_en || ''}\n${company.address_en || ''}\nTEL: ${company.tel || ''}`
     const defaultConsignee = `${client.name_en || client.name || ''}\n${client.address_en || client.address || ''}\nATTN: ${client.contact_name || ''} ${client.tel || ''}`
     const defaultDesc = (detail.items || [])
-      .map(it => `${it.name_en || ''} (${it.model || ''}) - ${it.qty || 0} PCS`)
+      .map(descLineWithHs)
       .join('\n')
     const freightTerm = bk.freight_term || (['FOB', 'EXW', 'FCA'].includes(detail.trade_terms) ? 'Collect' : 'Prepaid')
 
@@ -365,7 +372,7 @@ function buildBookingHtml(order, company, client) {
   const finalGw = bk.gw !== undefined && bk.gw !== '' ? bk.gw : totals.gw
   const finalCbm = bk.cbm !== undefined && bk.cbm !== '' ? bk.cbm : totals.cbm
 
-  const defaultDesc = (order.items || []).map(it => `${it.name_en || ''} (${it.model || ''}) - ${it.qty || 0} PCS`).join('\n')
+  const defaultDesc = (order.items || []).map(descLineWithHs).join('\n')
   const productsDescHtml = (bk.desc || defaultDesc).replace(/\n/g, '<br>')
 
   const vessel = bk.vessel || ''
@@ -382,23 +389,23 @@ function buildBookingHtml(order, company, client) {
 
   return `
     <style>
-      .bk-table { width:100%; border-collapse:collapse; font-family:Arial,sans-serif; font-size:11px; }
+      .bk-table { width:100%; table-layout:fixed; border-collapse:collapse; font-family:Arial,sans-serif; font-size:11px; }
       .bk-table td { border:1px solid #000; padding:6px 8px; vertical-align:top; line-height:1.5; word-break:break-word; }
       .bk-title { font-size:18px; font-weight:bold; text-align:center; background:#e2e8f0; vertical-align:middle; height:35px; }
       .bk-sec-title { background:#f1f5f9; font-weight:bold; font-size:12px; }
     </style>
     <table class="bk-table">
       <tr><td colspan="6" class="bk-title">BOOKING NOTE (海运订舱委托书)</td></tr>
-      <tr><td colspan="3" style="min-height:75px;"><strong>Shipper (发货人)</strong><br><div style="white-space:pre-wrap;margin-top:4px;">${shipperHtml}</div></td><td colspan="3"><div style="border-bottom:1px solid #cbd5e1;padding-bottom:6px;margin-bottom:6px;"><strong>Reference No. (客户单号):</strong> ${order.pi_number}-SHP</div><div><strong>Booking Date (订舱日期):</strong> ${dateToday}</div></td></tr>
+      <tr><td colspan="3" style="min-height:75px;"><strong>Shipper (发货人)</strong><br><div style="white-space:pre-wrap;margin-top:4px;">${shipperHtml}</div></td><td colspan="3"><div style="border-bottom:1px solid #cbd5e1;padding-bottom:6px;margin-bottom:6px;"><strong>Reference No. (客户单号):</strong> ${order.pi_number}SHP</div><div><strong>Booking Date (订舱日期):</strong> ${dateToday}</div></td></tr>
       <tr><td colspan="3" style="min-height:75px;"><strong>Consignee (收货人)</strong><br><div style="white-space:pre-wrap;margin-top:4px;">${consigneeHtml}</div></td><td colspan="3"><strong>Port of Loading (起运港 - POL)</strong><br>${loadingPort}</td></tr>
       <tr><td colspan="3" style="min-height:60px;"><strong>Notify Party (通知人)</strong><br>SAME AS CONSIGNEE</td><td colspan="3"><strong>Port of Discharge (卸货港 - POD)</strong><br>${dischargePort}</td></tr>
       <tr><td colspan="3"><strong>Port of Delivery (目的地 - Delivery)</strong><br>${deliveryPort}</td><td colspan="3"><strong>Forwarder / Agent (代理/货代)</strong><br>Direct Booking</td></tr>
       <tr><td colspan="6" class="bk-sec-title"> Route & Terms (航线及条款)</td></tr>
-      <tr><td colspan="2"><strong>Service Term (运输条款)</strong></td><td>CY/CY</td><td colspan="2"><strong>Freight Term (运费条款)</strong></td><td>${freightTermHtml}</td></tr>
-      <tr><td colspan="2"><strong>Incoterms (贸易条款)</strong></td><td>${tradeTerms}</td><td colspan="2"><strong>Target Vessel/Voyage (指定船期)</strong></td><td>${vessel}</td></tr>
+      <tr><td colspan="2"><strong>Service Term (运输条款)</strong></td><td>CY/CY</td><td><strong>Freight Term (运费条款)</strong></td><td colspan="2">${freightTermHtml}</td></tr>
+      <tr><td colspan="2"><strong>Incoterms (贸易条款)</strong></td><td>${tradeTerms}</td><td><strong>Target Vessel/Voyage (指定船期)</strong></td><td colspan="2">${vessel}</td></tr>
       <tr><td colspan="6" class="bk-sec-title"> Cargo Details (货物详情)</td></tr>
       <tr style="text-align:center;font-weight:bold;background:#f8fafc;"><td>Marks & Nos<br>(唛头)</td><td colspan="2">Description of Goods<br>(货物描述)</td><td>Quantity & Pkg<br>(件数及包装)</td><td>Gross Weight<br>(毛重 - KGS)</td><td>Measurement<br>(体积 - CBM)</td></tr>
-      <tr style="text-align:center;"><td>${marks}</td><td colspan="2" style="text-align:left;white-space:pre-wrap;">${productsDescHtml}</td><td>${finalCtns} CTNS</td><td>${finalGw}</td><td>${finalCbm}</td></tr>
+      <tr style="text-align:center;"><td style="white-space:pre-wrap;">${marks}</td><td colspan="2" style="text-align:left;white-space:pre-wrap;">${productsDescHtml}</td><td>${finalCtns} CTNS</td><td>${finalGw}</td><td>${finalCbm}</td></tr>
       <tr style="font-weight:bold;background:#f8fafc;"><td colspan="3" style="text-align:right;">TOTAL (合计):</td><td style="text-align:center;">${finalCtns} CTNS</td><td style="text-align:center;">${finalGw}</td><td style="text-align:center;">${finalCbm}</td></tr>
       <tr><td colspan="6" class="bk-sec-title"> Equipment & Special Requirements (要求)</td></tr>
       <tr><td colspan="2"><strong>Container Type & Qty<br>(柜型柜量)</strong></td><td colspan="4">${fclText}</td></tr>

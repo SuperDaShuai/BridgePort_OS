@@ -2,6 +2,34 @@
 const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
 
+// ===== Excel 边框常量 =====
+const BORDER_STYLE = 'medium';  // 中等粗细，打印清晰可见
+const BORDER_COLOR = { argb: 'FF000000' };
+const BORDER_MED = { style: BORDER_STYLE, color: BORDER_COLOR };
+// 给一个单元格画四边边框
+function drawCellBorder(cell) {
+  cell.border = {
+    top: BORDER_MED,
+    left: BORDER_MED,
+    bottom: BORDER_MED,
+    right: BORDER_MED
+  };
+}
+// 给一个合并区域 (topRow, leftCol, bottomRow, rightCol) 画外围边框
+function drawRangeBorder(ws, topRow, leftCol, bottomRow, rightCol) {
+  for (let r = topRow; r <= bottomRow; r++) {
+    for (let c = leftCol; c <= rightCol; c++) {
+      const cell = ws.getRow(r).getCell(c);
+      const b = cell.border || {};
+      if (r === topRow) b.top = BORDER_MED;
+      if (r === bottomRow) b.bottom = BORDER_MED;
+      if (c === leftCol) b.left = BORDER_MED;
+      if (c === rightCol) b.right = BORDER_MED;
+      cell.border = b;
+    }
+  }
+}
+
 function parsePagination(req) {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const pageSize = Math.min(200, Math.max(1, parseInt(req.query.pageSize) || 20));
@@ -18,12 +46,11 @@ function pickFields(body, allowed) {
 }
 
 // 数据归属过滤：权限等级 3（业务员）只能看到/操作自己创建的记录
-// 等级 1(超级管理员)/2(业务主管)/4(财务)/5(跟单) 不做隔离
 function isScopedOperator(req) {
   return Number(req.operator?.permission_level) === 3;
 }
 
-// 归属校验：业务员操作非本人记录时返回 404（不暴露记录存在性）
+// 归属校验：业务员操作非本人记录时返回 404
 function checkOwnership(row, req, label) {
   if (isScopedOperator(req) && row?.owner_id !== req.operator.id) {
     return `${label || '记录'}不存在或无权操作`;
@@ -31,191 +58,112 @@ function checkOwnership(row, req, label) {
   return null;
 }
 
-/* ================== 采购订货单 Excel：电源线/插头实物照片插入 ==================
-   模板照片区为 A25:C29 + E25:J29 两个合并块（占位文字在 A25）。
-   本函数把两块合并为 A{ph}:J{ph+4} 整块，并把 base64 实物照片按原始比例插入该区域。
-   注意：ExcelJS insertRow 不会移动合并单元格，因此照片区必须按占位文字动态定位，
-   并同时清理「目标范围」与「模板原范围」内残留的旧合并定义。 */
-const PO_PHOTO_AREA_ROWS = 5;  // 照片区占 5 行
-const PO_PHOTO_BASE_ROW = 25;  // 模板照片区起始行（未插行时）
-const PO_PHOTO_COL_PX = [36.5, 90.75, 93.38, 93.38, 82.88, 92.5, 78.5, 60.13, 130.13, 130.13]; // A-J 列像素宽
-const PHOTO_SLOT_W = 165;      // 单个横向槽位宽（含间距）
-const PHOTO_BOX_W = 150;       // 单张图最大宽
-const PHOTO_BOX_H = 115;       // 单张图最大高
-const PHOTO_GAP_Y = 12;
-const PHOTO_PAD_X = 10;
-const PHOTO_PAD_Y = 8;
-
-// 从 PNG/JPEG 二进制头解析图片原始尺寸（用于保持宽高比缩放）
-function _imagePixelSize(buf) {
-  try {
-    if (buf[0] === 0x89 && buf[1] === 0x50) return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
-    if (buf[0] === 0xff && buf[1] === 0xd8) { // JPEG：扫描 SOF0~SOF15 段
-      let off = 2;
-      while (off < buf.length - 9) {
-        if (buf[off] !== 0xff) { off++; continue; }
-        const marker = buf[off + 1];
-        if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
-          return { h: buf.readUInt16BE(off + 5), w: buf.readUInt16BE(off + 7) };
-        }
-        off += 2 + buf.readUInt16BE(off + 2);
-      }
-    }
-  } catch { /* 忽略解析失败 */ }
-  return null;
-}
-
-// 定位照片区：按占位文字「请在此处粘贴」搜索 A 列（插行后地址会下移）
-function _findPlugPhotoRow(ws) {
-  const maxRow = Math.min(ws.rowCount || 60, 60);
-  for (let r = PO_PHOTO_BASE_ROW - 5; r <= maxRow; r++) {
-    const v = ws.getRow(r).getCell(1).value;
-    const s = typeof v === 'string' ? v : (v && v.richText ? v.richText.map((t) => t.text).join('') : '');
-    if (s.includes('请在此处粘贴')) return r;
-  }
-  return 0;
-}
-
-function addPlugPhotosToWorksheet(ws, photos) {
-  const phRow = _findPlugPhotoRow(ws);
-  if (!phRow) return;
-  const lastRow = phRow + PO_PHOTO_AREA_ROWS - 1;
-
-  // 1) 处理照片区残留合并：ExcelJS insertRow 只下移单元格不移动 _merges 定义，
-  //    因此需要 (a) 删除 _merges 中与照片区相交的陈旧条目 (b) 解除实际单元格的合并引用
-  const staleMerges = [];
-  for (const [master, m] of Object.entries(ws._merges || {})) {
-    const top = m && m.top !== undefined ? m.top : parseInt(String(master).replace(/\D/g, ''), 10);
-    const bottom = m && m.bottom !== undefined ? m.bottom : top;
-    if (bottom >= phRow && top <= lastRow) staleMerges.push(master);
-  }
-  for (const master of staleMerges) delete ws._merges[master];
-  for (let r = phRow; r <= lastRow; r++) {
-    for (let c = 1; c <= 10; c++) {
-      const cell = ws.getRow(r).getCell(c);
-      try { cell.unmerge(); } catch { /* 未合并单元格忽略 */ }
-    }
-  }
-
-  // 2) 合并为整块 A{ph}:J{last}
-  ws.mergeCells(`A${phRow}:J${lastRow}`);
-
-  const list = (photos || []).filter(
-    (p) => typeof p === 'string' && /^data:image\/(png|jpe?g);base64,/.test(p)
-  );
-  if (!list.length) return; // 无图：保留占位文字原样
-
-  // 3) 清除占位文字，按图片视觉行数等比放大 5 行行高
-  ws.getCell(`A${phRow}`).value = '';
-  const visualRows = Math.ceil(list.length / Math.floor((PO_PHOTO_COL_PX.reduce((a, b) => a + b, 0) - 20) / PHOTO_SLOT_W));
-  const rowH = Math.max(22, Math.ceil((22 * PO_PHOTO_AREA_ROWS * visualRows + 20) / PO_PHOTO_AREA_ROWS));
-  for (let r = phRow; r <= lastRow; r++) ws.getRow(r).height = rowH;
-  const rowPx = (rowH * 4) / 3;
-  const areaH = rowPx * PO_PHOTO_AREA_ROWS;
-  const areaW = PO_PHOTO_COL_PX.reduce((a, b) => a + b, 0);
-  const perRow = Math.max(1, Math.floor((areaW - 20) / PHOTO_SLOT_W));
-
-  // 4) 逐张插入（保持宽高比，槽位内居中）
-  for (let i = 0; i < list.length; i++) {
-    const dataUrl = list[i];
-    const ext = dataUrl.startsWith('data:image/png') ? 'png' : 'jpeg';
-    const raw = Buffer.from(dataUrl.replace(/^data:image\/[a-zA-Z]+;base64,/, ''), 'base64');
-    const imgId = ws.workbook.addImage({ base64: dataUrl.replace(/^data:image\/[a-zA-Z]+;base64,/, ''), extension: ext });
-
-    const dim = _imagePixelSize(raw) || { w: PHOTO_BOX_W, h: PHOTO_BOX_H };
-    const scale = Math.min(PHOTO_BOX_W / dim.w, PHOTO_BOX_H / dim.h);
-    const w = Math.max(30, Math.round(dim.w * scale));
-    const h = Math.max(24, Math.round(dim.h * scale));
-
-    const visR = Math.floor(i / perRow);
-    const inRow = i % perRow;
-    const slotX = PHOTO_PAD_X + inRow * PHOTO_SLOT_W;
-    let x = slotX + Math.max(0, Math.floor((PHOTO_SLOT_W - PHOTO_GAP_Y - w) / 2));
-    let y = PHOTO_PAD_Y + visR * (PHOTO_BOX_H + PHOTO_GAP_Y) + Math.max(0, Math.floor((PHOTO_BOX_H - h) / 2));
-    if (x + w > areaW - 4) x = Math.max(4, areaW - 4 - w);
-    if (y + h > areaH - 4) y = Math.max(4, areaH - 4 - h);
-
-    // 像素坐标 → ExcelJS tl 锚点（列按 A-I 累计宽，行按等高行内比例）
-    let acc = 0;
-    let colTl = PO_PHOTO_COL_PX.length - 1;
-    for (let c = 0; c < PO_PHOTO_COL_PX.length; c++) {
-      if (x < acc + PO_PHOTO_COL_PX[c]) { colTl = c + (x - acc) / PO_PHOTO_COL_PX[c]; break; }
-      acc += PO_PHOTO_COL_PX[c];
-    }
-    ws.addImage(imgId, {
-      tl: { col: colTl, row: (phRow - 1) + y / rowPx },
-      ext: { width: w, height: h },
-      editAs: 'oneCell'
-    });
-  }
-}
-
-module.exports = { asyncHandler, parsePagination, pickFields, isScopedOperator, checkOwnership, addPlugPhotosToWorksheet, addDetailThumbToWorksheet, clearUnusedDetailRows, setDetailTotal };
-
 /* ================== 采购订货单 Excel：明细行产品缩略图 ==================
-   模板明细区 C 列为「图片」列，每行产品图片以 44x44 嵌入。
-   配套要求：明细行行高需设为 36pt（约48px），图片在本行内垂直居中，多行不重叠。 */
+   新模板 8 列结构（A-H），C 列为「图片」列，每行产品图片放大居中嵌入。
+   配套要求：明细行行高需设为 85pt，图片 80x80 在 C 列水平垂直居中。 */
 function addDetailThumbToWorksheet(ws, rowNo, dataUrl) {
   if (typeof dataUrl !== 'string' || !/^data:image\/(png|jpe?g);base64,/.test(dataUrl)) return;
   try {
+    // 清除模板残留的占位文字
+    ws.getCell(`C${rowNo}`).value = null;
     const ext = dataUrl.startsWith('data:image/png') ? 'png' : 'jpeg';
     const base64 = dataUrl.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
     const imgId = ws.workbook.addImage({ base64, extension: ext });
+    // C 列宽约 10 字符（约 75px），行高 85pt（约 113px），图片 80x80 居中
+    const colWidth = 75;  // C 列像素宽
+    const rowHeight = 113; // 85pt ≈ 113px
+    const imgSize = 80;
+    const offsetX = Math.max(0, (colWidth - imgSize) / 2) / 75; // 比例偏移
+    const offsetY = Math.max(0, (rowHeight - imgSize) / 2) / rowHeight;
     ws.addImage(imgId, {
-      // C 列（col index 2，宽约 93px）水平居中；行高 36pt≈48px，图片 44px 上下各留 2px
-      tl: { col: 2 + 0.26, row: (rowNo - 1) + 0.04 },
-      ext: { width: 44, height: 44 },
+      tl: { col: 2 + offsetX, row: (rowNo - 1) + offsetY },
+      ext: { width: imgSize, height: imgSize },
       editAs: 'oneCell'
     });
   } catch { /* 图片嵌入失败不阻断 Excel 生成 */ }
 }
 
 /* ================== 采购订货单 Excel：清空明细区未使用行 ==================
-   模板明细区预留行带有样例数据，实际明细不足时必须清空，避免样例残留在成品中。 */
+   新模板明细区预留 3 行（7-9），实际明细不足时必须清空，避免样例残留。
+   8 列结构：A-H，其中 F:G 在明细行中是合并单元格。 */
 function clearUnusedDetailRows(ws, detailStart, usedRows, totalRows) {
   for (let i = usedRows; i < totalRows; i++) {
     const row = ws.getRow(detailStart + i);
-    for (let c = 1; c <= 10; c++) row.getCell(c).value = null;
+    for (let c = 1; c <= 8; c++) row.getCell(c).value = null;
   }
 }
 
-/* ================== 采购订货单 Excel：合计行写入 ==================
-   模板原合计行固定在 row 15（A15:B15 标签 / C15:D15 值 / E15:J15 提示）。
-   当明细超 5 行时 insertRow 在 row 13+ 插行，原 row 15 的值/样式下移到 15+extra，
-   但 _merges 仍留在 row 15（陈旧）。需清除陈旧合并并在 15+extra 重建 + 写入合计数量。
-   注意：insertRow 后 unMergeCells 为空操作，必须用 delete _merges + cell.unmerge 双管齐下。 */
-function setDetailTotal(ws, extra, totalQty) {
-  const totalRow = 15 + extra;
+/* ================== 采购订货单 Excel：重建固定区合并单元格 ==================
+   新模板固定区合并（行号在插行后整体下移 extra 行）：
+   - 统一采购备注标题: A11:H11 → A(11+ext):H(11+ext)
+   - 统一采购备注内容: A12:H12 → A(12+ext):H(12+ext)
+   - 客户需求与其他备注标题: A14:H14 → A(14+ext):H(14+ext)
+   - 实物图片区: A15:H15 → A(15+ext):H(15+ext)
+   - 备注内容: A16:H16 → A(16+ext):H(16+ext)
+   insertRow 只下移单元格值不移动 _merges，必须先删陈旧合并再重建。
+   无论 extra 是否为 0，重建后都重新画边框（模板可能本身没画边框）。 */
+function rebuildPoMerges(ws, extra) {
+  // 原始合并行号
+  const origRows = [11, 12, 14, 15, 16];
 
-  // 1. 清除原 row 15 的陈旧合并（insertRow 后 unMergeCells 无效，用直接删除）
-  const staleAt15 = [];
-  for (const [master, m] of Object.entries(ws._merges || {})) {
-    const top = m && m.top !== undefined ? m.top : parseInt(String(master).replace(/\D/g, ''), 10);
-    if (top === 15) staleAt15.push(master);
-  }
-  for (const master of staleAt15) delete ws._merges[master];
-  for (let c = 1; c <= 10; c++) {
-    try { ws.getRow(15).getCell(c).unmerge(); } catch { /* 忽略 */ }
-  }
-
-  // 2. 清除 totalRow 位置的合并（电气区等模板合并仍留在原位，与合计行值区冲突）
-  if (totalRow !== 15) {
-    const staleAtTarget = [];
+  // 清除原始位置的陈旧合并（extra>0 时才需要，extra=0 时直接清新位置）
+  const rowsToClear = extra > 0 ? origRows.map(r => r + extra).concat(origRows) : origRows;
+  for (const r of rowsToClear) {
+    const stale = [];
     for (const [master, m] of Object.entries(ws._merges || {})) {
       const top = m && m.top !== undefined ? m.top : parseInt(String(master).replace(/\D/g, ''), 10);
-      if (top === totalRow) staleAtTarget.push(master);
+      if (top === r) stale.push(master);
     }
-    for (const master of staleAtTarget) delete ws._merges[master];
-    for (let c = 1; c <= 10; c++) {
-      try { ws.getRow(totalRow).getCell(c).unmerge(); } catch { /* 忽略 */ }
+    for (const master of stale) delete ws._merges[master];
+    for (let c = 1; c <= 8; c++) {
+      try { ws.getRow(r).getCell(c).unmerge(); } catch { /* 忽略 */ }
     }
   }
 
-  // 3. 重建合计行合并（A:B 标签 / C:D 值 / E:J 提示）
-  ws.mergeCells(`A${totalRow}:B${totalRow}`);
-  ws.mergeCells(`C${totalRow}:D${totalRow}`);
-  ws.mergeCells(`E${totalRow}:J${totalRow}`);
-
-  // 4. 写入合计数量到 C 列（值区 master 格）
-  ws.getCell(`C${totalRow}`).value = totalQty;
+  // 重建合并 + 画边框（无论 extra 是否为 0，都重建并画边框）
+  const e = extra;
+  const ranges = [
+    [11 + e, 11 + e],   // 模块二标题
+    [12 + e, 12 + e],   // 模块二内容
+    [14 + e, 14 + e],   // 模块三标题
+    [15 + e, 15 + e],   // 实物图片区
+    [16 + e, 16 + e],   // 备注内容
+  ];
+  for (const [top, bottom] of ranges) {
+    ws.mergeCells(`A${top}:H${bottom}`);
+    drawRangeBorder(ws, top, 1, bottom, 8);
+  }
 }
+
+/* ================== 采购订货单 Excel：重建明细行 F:G 合并 ==================
+   新模板明细行 F:G 列合并为「详细规范」列。insertRow 插入的新行不继承合并，
+   需要为每个明细行重建 F:G 合并，合并后重新画边框（mergeCells 会丢样式）。 */
+function rebuildDetailMerges(ws, detailStart, count) {
+  for (let i = 0; i < count; i++) {
+    const row = detailStart + i;
+    // 清除可能残留的合并
+    const stale = [];
+    for (const [master, m] of Object.entries(ws._merges || {})) {
+      const top = m && m.top !== undefined ? m.top : parseInt(String(master).replace(/\D/g, ''), 10);
+      if (top === row) stale.push(master);
+    }
+    for (const master of stale) delete ws._merges[master];
+    try { ws.getRow(row).getCell(6).unmerge(); } catch { /* 忽略 */ }
+    try { ws.getRow(row).getCell(7).unmerge(); } catch { /* 忽略 */ }
+    // 重建 F:G 合并 + 重画边框
+    ws.mergeCells(`F${row}:G${row}`);
+    drawRangeBorder(ws, row, 1, row, 8);  // 整行 A-H 画边框
+  }
+}
+
+module.exports = {
+  asyncHandler,
+  parsePagination,
+  pickFields,
+  isScopedOperator,
+  checkOwnership,
+  addDetailThumbToWorksheet,
+  clearUnusedDetailRows,
+  rebuildPoMerges,
+  rebuildDetailMerges
+};

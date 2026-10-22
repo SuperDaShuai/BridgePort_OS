@@ -375,8 +375,8 @@ async function getOrderDocs(row) {
   if (!customs) {
     customs = {
       client_id: detail.client_id,
-      sc_no: detail.pi_number + '-SC',
-      inv_no: detail.pi_number + '-INV',
+      sc_no: detail.pi_number + 'SC',
+      inv_no: detail.pi_number + 'INV',
       date: detail.signing_date || '',
       payment_terms: detail.payment_terms || 'T/T',
       price_terms: (detail.trade_terms || 'FOB') + (detail.loading_port ? ' ' + detail.loading_port : ''),

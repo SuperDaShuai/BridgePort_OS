@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <el-card shadow="never" class="page-card">
     <!-- 工具栏 -->
     <div class="toolbar">
@@ -174,7 +174,7 @@ const list = ref([])
 const total = ref(0)
 const clientOptions = ref([])
 const productOptions = ref([])
-const query = reactive({ q: '', stage: '', page: 1, pageSize: 10 })
+const query = reactive({ q: '', stage: '', page: 1, pageSize: 20 })
 
 const dialogVisible = ref(false)
 const formRef = ref()

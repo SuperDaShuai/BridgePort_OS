@@ -5,7 +5,7 @@ const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers'
 const router = express.Router();
 
 const ALLOWED = [
-  'model', 'our_model', 'hs_code', 'supplier_id', 'name_cn', 'name_en', 'spec', 'spec_cn', 'remark',
+  'model', 'our_model', 'product_type', 'hs_code', 'supplier_id', 'name_cn', 'name_en', 'spec', 'spec_cn', 'remark',
   'prod_length', 'prod_width', 'prod_height',
   'box_length', 'box_width', 'box_height',
   'ctn_length', 'ctn_width', 'ctn_height',

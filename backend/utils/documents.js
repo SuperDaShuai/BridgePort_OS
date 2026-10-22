@@ -79,43 +79,160 @@ function deriveExitCustoms(loadingPort) {
   return '';
 }
 
-function generateDefaultDocuments(piNumber, signingDate, customsResp, items, ctx = {}) {
-  const isCompany = customsResp !== '客户自行报关';
+// 从 items 的 product_id 批量查询供应商映射
+// queryFn: async (sql, params) => rows 数组（由调用方绑定 pool.query 或 conn.query）
+// 返回 { productSupplierMap, suppliersMap }，供 generateDefaultDocuments 的 ctx 使用
+async function buildSupplierMaps(items, queryFn) {
+  const productIds = [...new Set((items || []).map(it => it.product_id).filter(Boolean))];
+  if (productIds.length === 0) return { productSupplierMap: {}, suppliersMap: {} };
+  const prodRows = await queryFn('SELECT id, supplier_id FROM products WHERE id IN (?)', [productIds]);
+  const productSupplierMap = {};
+  const supplierIds = new Set();
+  prodRows.forEach(r => {
+    productSupplierMap[r.id] = { supplier_id: r.supplier_id, supplier_name: '' };
+    if (r.supplier_id) supplierIds.add(r.supplier_id);
+  });
+  const supplierIdsArr = [...supplierIds];
+  let supplierRows = [];
+  if (supplierIdsArr.length > 0) {
+    supplierRows = await queryFn('SELECT id, name, credit_code, factory_address FROM suppliers WHERE id IN (?)', [supplierIdsArr]);
+  }
+  const suppliersMap = {};
+  supplierRows.forEach(s => {
+    suppliersMap[s.id] = { name: s.name, credit_code: s.credit_code, factory_address: s.factory_address };
+  });
+  // 回填 productSupplierMap 的 supplier_name
+  Object.values(productSupplierMap).forEach(p => {
+    if (p.supplier_id && suppliersMap[p.supplier_id]) {
+      p.supplier_name = suppliersMap[p.supplier_id].name;
+    }
+  });
+  return { productSupplierMap, suppliersMap };
+}
 
-  const purchaseContract = {
-    contract_no: piNumber + '-CG',
+// 按供应商分组明细行
+// 输入：items（含 product_id 和 id）、productSupplierMap（{product_id: {supplier_id, supplier_name}}）
+// 输出：[{supplier_id, supplier_name, items: [...], product_ids: [...]}]
+// supplier_id 为 null（无供应商 / 自定义产品 product_id 为空）的归到末尾组（标签"未指定供应商"），按 supplier_id 升序
+function groupBySupplier(items, productSupplierMap) {
+  const map = new Map();
+  (items || []).forEach((it) => {
+    const pid = it.product_id;
+    const info = (pid && productSupplierMap[pid]) || {};
+    const sid = info.supplier_id || null;
+    const sname = info.supplier_name || '';
+    const key = sid === null || sid === undefined ? '__null__' : String(sid);
+    if (!map.has(key)) {
+      map.set(key, { supplier_id: sid, supplier_name: sname, items: [], product_ids: [] });
+    }
+    const g = map.get(key);
+    g.items.push(it);
+    if (pid !== undefined && pid !== null) g.product_ids.push(pid);
+  });
+  // 排序：有 supplier_id 的按 id 升序，null 组排末尾
+  const groups = [...map.values()];
+  groups.sort((a, b) => {
+    if (a.supplier_id === null) return 1;
+    if (b.supplier_id === null) return -1;
+    return a.supplier_id - b.supplier_id;
+  });
+  // 给 null 组补默认名
+  groups.forEach((g) => {
+    if (g.supplier_id === null && !g.supplier_name) g.supplier_name = '未指定供应商';
+  });
+  return groups;
+}
+
+// 构造单份购销合同字段集（大合同和子合同复用）
+function buildContractFields(piNumber, signingDate, supplierInfo) {
+  return {
+    contract_no: piNumber,                  // 由调用方传入完整编号
     sign_date: signingDate,
-    // 一、合同双方
-    buyer_name: '',           // 采购方（甲方）名称
-    buyer_credit_code: '',    // 甲方统一社会信用代码
-    buyer_address: '',        // 甲方地址
-    supplier_name: '',        // 供应方（乙方）名称
-    supplier_credit_code: '',// 乙方统一社会信用代码
-    supplier_address: '',     // 乙方地址
-    // 三、质量要求与检测（3条，按模板默认）
-    quality_req_1: '乙方需按上述规格参数生产，产品需符合《电子秤通用技术规范》（GB/T 7722-2017），且满足防水、称重精准等核心功能要求；',
-    quality_req_2: '乙方需对所有样品进行全检（含功能测试、外观检查），确保"检测没问题"后再打包，甲方有权抽检，若发现不合格品，乙方需免费更换；',
-    quality_req_3: '样品需附带产品合格检测报告（每台对应检测记录）。',
-    // 四、交货条款
+    buyer_name: '',
+    buyer_credit_code: '',
+    buyer_address: '',
+    supplier_name: (supplierInfo && supplierInfo.name) || '',
+    supplier_credit_code: (supplierInfo && supplierInfo.credit_code) || '',
+    supplier_address: (supplierInfo && supplierInfo.factory_address) || '',
+    quality_notes: '1. 乙方需按上述规格参数生产，产品需符合《电子秤通用技术规范》（GB/T 7722-2017），且满足防水、称重精准等核心功能要求；\n2. 乙方需对所有样品进行全检（含功能测试、外观检查），确保"检测没问题"后再打包，甲方有权抽检，若发现不合格品，乙方需免费更换；\n3. 样品需附带产品合格检测报告（每台对应检测记录）。',
     delivery_location: '甲方指定地址',
     delivery_time: '合同签订后30天内',
     packing_req: '采用出口标准包装（防水、防摔），外箱标注"样品""易碎"标识。',
-    // 五、结算条款
-    payment_method: '验货完成后全额付款',
-    payee_name: '',           // 收款人（默认取供应商第一个联系人）
-    payee_account: '',        // 收款账号
-    payee_bank: '',           // 收款银行
-    invoice_clause: '以上价格是出厂不含税价格',
-    // 六、其他条款（2条，按模板默认）
-    other_clause_1: '本合同一式两份，甲乙双方各执一份，签字盖章后生效；',
-    other_clause_2: '未尽事宜，双方协商解决；协商不成的，向永康人民法院提起诉讼。'
+    payment_route_type: '',
+    payment_routing_note: '',
+    other_clauses: '1. 本合同一式两份，甲乙双方各执一份，签字盖章后生效；\n2. 未尽事宜，双方协商解决；协商不成的，向永康人民法院提起诉讼。'
+  };
+}
+
+function generateDefaultDocuments(piNumber, signingDate, customsResp, items, ctx = {}) {
+  const isCompany = customsResp !== '客户自行报关';
+
+  // ===== 按供应商分组（多供应商时拆子合同）=====
+  const productSupplierMap = ctx.productSupplierMap || {};
+  const suppliersMap = ctx.suppliersMap || {};
+  const groups = groupBySupplier(items, productSupplierMap);
+  const isMultiSupplier = groups.length > 1;
+
+  // ===== 大合同（主合同）=====
+  // 单供应商：直接把供应商信息填入大合同（供方工厂/信用代码/地址）
+  // 多供应商：大合同作为父合同（无具体供应商），拆分子合同
+  const singleGroup = !isMultiSupplier && groups.length === 1 ? groups[0] : null;
+  const singleSupplierInfo = singleGroup ? (suppliersMap[singleGroup.supplier_id] || {}) : {};
+  const mainContractBase = buildContractFields(piNumber + 'GX', signingDate, singleGroup ? {
+    name: singleGroup.supplier_name,
+    credit_code: singleSupplierInfo.credit_code || '',
+    factory_address: singleSupplierInfo.factory_address || ''
+  } : null);
+  const purchaseContract = {
+    ...mainContractBase,
+    // 单供应商也记录 supplier_id（列表展示与下载需要）
+    ...(singleGroup ? { supplier_id: singleGroup.supplier_id, product_ids: singleGroup.product_ids } : {}),
+    // 多供应商时启用子合同结构
+    is_parent: isMultiSupplier,
+    sub_contracts: []
   };
 
+  // 多供应商：生成子合同数组
+  if (isMultiSupplier) {
+    purchaseContract.sub_contracts = groups.map((g, idx) => {
+      const sInfo = suppliersMap[g.supplier_id] || {};
+      const sub = buildContractFields(piNumber + 'GX' + (idx + 1), signingDate, {
+        name: g.supplier_name,
+        credit_code: sInfo.credit_code || '',
+        factory_address: sInfo.factory_address || ''
+      });
+      sub.supplier_id = g.supplier_id;
+      sub.product_ids = g.product_ids;
+      return sub;
+    });
+  }
+
+  // ===== 生产任务单（采购合同编号：大任务单 {PI}PO，子任务单 {PI}PO1、{PI}PO2… 递增）=====
   const productionOrder = {
-    po_no: piNumber + '-PO',
+    po_no: piNumber + 'PO',
+    po_number: piNumber + 'PO',
     tech_req: '严格按照外销技术要求生产',
-    mark_req: '包装双坑中性外箱'
+    mark_req: '包装双坑中性外箱',
+    is_parent: isMultiSupplier,
+    // 单供应商：记录供应商信息（列表展示需要）
+    ...(singleGroup ? { supplier_id: singleGroup.supplier_id, supplier_name: singleGroup.supplier_name } : {}),
+    sub_orders: []
   };
+
+  if (isMultiSupplier) {
+    productionOrder.sub_orders = groups.map((g, idx) => {
+      const sInfo = suppliersMap[g.supplier_id] || {};
+      return {
+        po_number: piNumber + 'PO' + (idx + 1),        // 子任务单的采购合同编号（递增）
+        sub_contract_no: piNumber + 'GX' + (idx + 1),  // 关联的子购销合同编号
+        supplier_id: g.supplier_id,
+        supplier_name: g.supplier_name,
+        tech_req: '严格按照外销技术要求生产',
+        mark_req: '包装双坑中性外箱',
+        product_ids: g.product_ids
+      };
+    });
+  }
 
   const docs = {
     purchase_contract: purchaseContract,
@@ -130,8 +247,8 @@ function generateDefaultDocuments(piNumber, signingDate, customsResp, items, ctx
     // ===== 清关外销三单共享数据（Commercial Invoice / Sales Contract / Packing List）=====
     docs.customs_data = {
       client_id: ctx.client_id || null,
-      sc_no: piNumber + '-SC',
-      inv_no: piNumber + '-INV',
+      sc_no: piNumber + 'SC',
+      inv_no: piNumber + 'INV',
       date: signingDate || '',
       payment_terms: ctx.payment_terms || '',
       price_terms: ctx.trade_terms || 'FOB',
@@ -231,4 +348,4 @@ function generateDefaultDocuments(piNumber, signingDate, customsResp, items, ctx
   return docs;
 }
 
-module.exports = { generateDefaultDocuments, groupItemsByHs, deriveExitCustoms };
+module.exports = { generateDefaultDocuments, groupItemsByHs, deriveExitCustoms, groupBySupplier, buildSupplierMaps };
