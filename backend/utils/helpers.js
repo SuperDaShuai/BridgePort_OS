@@ -15,17 +15,18 @@ function drawCellBorder(cell) {
     right: BORDER_MED
   };
 }
-// 给一个合并区域 (topRow, leftCol, bottomRow, rightCol) 画外围边框
+// 给一个合并区域 (topRow, leftCol, bottomRow, rightCol) 画完整网格边框
+// 矩形内每个 cell 的四边都画 BORDER_MED —— 和明细行的每行画完整边框保持视觉一致
 function drawRangeBorder(ws, topRow, leftCol, bottomRow, rightCol) {
   for (let r = topRow; r <= bottomRow; r++) {
     for (let c = leftCol; c <= rightCol; c++) {
       const cell = ws.getRow(r).getCell(c);
-      const b = cell.border || {};
-      if (r === topRow) b.top = BORDER_MED;
-      if (r === bottomRow) b.bottom = BORDER_MED;
-      if (c === leftCol) b.left = BORDER_MED;
-      if (c === rightCol) b.right = BORDER_MED;
-      cell.border = b;
+      cell.border = {
+        top: BORDER_MED,
+        left: BORDER_MED,
+        bottom: BORDER_MED,
+        right: BORDER_MED
+      };
     }
   }
 }
@@ -139,6 +140,7 @@ function rebuildPoMerges(ws, extra) {
    新模板明细行 F:G 列合并为「详细规范」列。insertRow 插入的新行不继承合并，
    需要为每个明细行重建 F:G 合并，合并后重新画边框（mergeCells 会丢样式）。 */
 function rebuildDetailMerges(ws, detailStart, count) {
+  const detailEnd = detailStart + count - 1;
   for (let i = 0; i < count; i++) {
     const row = detailStart + i;
     // 清除可能残留的合并
@@ -150,9 +152,12 @@ function rebuildDetailMerges(ws, detailStart, count) {
     for (const master of stale) delete ws._merges[master];
     try { ws.getRow(row).getCell(6).unmerge(); } catch { /* 忽略 */ }
     try { ws.getRow(row).getCell(7).unmerge(); } catch { /* 忽略 */ }
-    // 重建 F:G 合并 + 重画边框
+    // 重建 F:G 合并
     ws.mergeCells(`F${row}:G${row}`);
-    drawRangeBorder(ws, row, 1, row, 8);  // 整行 A-H 画边框
+  }
+  // 明细区域统一画一次完整网格（避免每行单独画导致相邻行双线重叠）
+  if (detailEnd >= detailStart) {
+    drawRangeBorder(ws, detailStart, 1, detailEnd, 8);
   }
 }
 

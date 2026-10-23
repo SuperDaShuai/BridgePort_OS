@@ -614,15 +614,13 @@ router.put(
     if (data.show_hs_code !== undefined) data.show_hs_code = toBool(data.show_hs_code);
     const hasItems = Array.isArray(req.body.items);
 
-    // 业务员(3)不可编辑任何单据数据（5 个单据字段全部剥离）
-    // 跟单(5)只能编辑订舱/报关/清关字段，剥离购销合同/生产任务单（合同和生产任务单由主管维护）
+    // 权限剥离：
+    // - 业务员(3)：不可编辑任何单据数据（5 个单据字段全部剥离）
+    // - 跟单(5)：可编辑 PO/合同 + 报关物流（负责生产跟单和订舱报关）
+    // - 主管(2)/管理员(1)：全部字段可编辑
     const lvl = Number(req.operator?.permission_level);
     if (lvl === 3) {
       for (const f of ['purchase_contract', 'production_order', 'booking_data', 'customs_data', 'decl_data']) {
-        delete data[f];
-      }
-    } else if (lvl === 5) {
-      for (const f of ['purchase_contract', 'production_order']) {
         delete data[f];
       }
     }

@@ -891,19 +891,21 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
       </table>
     </div>
 
-    <div style="margin-top:8px; border:${BORDER}; border-top:none;">
-      <div style="${sectionStyle} border-bottom:${BORDER};">统一采购备注 (General Purchase Remarks)</div>
-      <div style="padding:8px 10px; font-size:11px; background:#fff;">${generalRemarksText}</div>
-    </div>
+    <table style="border-collapse:collapse; width:100%; margin-top:8px;">
+      <tr><td style="${sectionStyle} border-top:${BORDER};">统一采购备注 (General Purchase Remarks)</td></tr>
+      <tr><td style="${cellStyle} background:#fff; white-space:pre-wrap;">${generalRemarksText}</td></tr>
+    </table>
 
-    <div style="margin-top:8px; border:${BORDER}; border-top:none;">
-      <div style="${sectionStyle} border-bottom:${BORDER};">客户需求与其他备注 (Customer Requirements & Other Remarks)</div>
+    <table style="border-collapse:collapse; width:100%; margin-top:0;">
+      <tr><td style="${sectionStyle} border-top:${BORDER};">客户需求与其他备注 (Customer Requirements & Other Remarks)</td></tr>
       ${photos.length ? `
-      <div style="padding:8px; background:#fff; display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-start; border-bottom:${BORDER};">
-        ${photos.map(p => `<img src="${p}" style="width:100px; height:100px; object-fit:cover; border:1px solid #cbd5e1; border-radius:4px;" />`).join('')}
-      </div>` : ''}
-      <div style="padding:8px 10px; font-size:11px; background:#fff; white-space:pre-wrap;">${remarkText || '<span style="color:#64748b; font-style:italic;">无</span>'}</div>
-    </div>
+      <tr><td style="${cellStyle} background:#fff; padding:8px;">
+        <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-start;">
+          ${photos.map(p => `<img src="${p}" style="width:100px; height:100px; object-fit:cover; border:1px solid #cbd5e1; border-radius:4px;" />`).join('')}
+        </div>
+      </td></tr>` : ''}
+      <tr><td style="${cellStyle} background:#fff; white-space:pre-wrap;">${remarkText || '<span style="color:#64748b; font-style:italic;">无</span>'}</td></tr>
+    </table>
   `
 }
 
