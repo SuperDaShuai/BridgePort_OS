@@ -43,23 +43,41 @@ const ITEM_FIELDS = [
 ];
 
 // 明细行清洗：允许 model 为空（自定义产品），price 允许为 0；联动重算小计
-function normalizeItems(items) {
-  return (Array.isArray(items) ? items : [])
-    .filter((it) => it && (it.model || it.model_custom || it.product_id || it.name_en))
-    .map((it) => {
-      const row = { ...it };
-      const qty = Number(row.qty || 0);
-      const pcs = Number(row.pcs_per_ctn || 0);
-      // 单价：cost_cny 优先，price 回退，都空给 0
-      const price = Number(row.cost_cny !== undefined && row.cost_cny !== ''
-        ? row.cost_cny
-        : (row.price !== undefined && row.price !== '' ? row.price : 0));
-      row.price = price;
-      row.cost_cny = price;
-      if (pcs > 0) row.ctns = Math.ceil(qty / pcs);
-      row.subtotal_amount = Number((qty * price).toFixed(2));
-      return ITEM_FIELDS.map((f) => (row[f] === undefined || row[f] === '' ? null : row[f]));
-    });
+// 关键：price（外销/样品价）和 cost_cny（采购价）是**独立字段**，互不覆盖！
+// normalizeItems 只负责清理 + 补齐缺失值（cost_cny 为空时从产品库补）
+function normalizeItems(items, pool) {
+  // 有 product_id 的明细，批量查产品库的 purchase_cost_rmb 补 cost_cny
+  return (async () => {
+    let productCostMap = {};
+    const withProduct = (Array.isArray(items) ? items : []).filter(it => it && it.product_id);
+    if (pool && withProduct.length > 0) {
+      const ids = [...new Set(withProduct.map(it => Number(it.product_id)))];
+      try {
+        const [rows] = await pool.query(`SELECT id, purchase_cost_rmb FROM products WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+        for (const r of rows) productCostMap[r.id] = r.purchase_cost_rmb;
+      } catch { /* 忽略，用前端传来的值 */ }
+    }
+    return (Array.isArray(items) ? items : [])
+      .filter((it) => it && (it.model || it.model_custom || it.product_id || it.name_en))
+      .map((it) => {
+        const row = { ...it };
+        const qty = Number(row.qty || 0);
+        const pcs = Number(row.pcs_per_ctn || 0);
+        // price = 用户编辑的样品/外销价（独立，不被 cost_cny 覆盖）
+        const userPrice = row.price !== undefined && row.price !== '' ? Number(row.price) : 0;
+        row.price = userPrice;
+        // cost_cny = 采购价：前端传了就用前端的；没传就从产品库补；都没有才用 price 兜底
+        if (row.cost_cny === undefined || row.cost_cny === null || row.cost_cny === '') {
+          const pid = Number(row.product_id);
+          row.cost_cny = productCostMap[pid] !== undefined ? Number(productCostMap[pid]) : userPrice;
+        } else {
+          row.cost_cny = Number(row.cost_cny);
+        }
+        if (pcs > 0) row.ctns = Math.ceil(qty / pcs);
+        row.subtotal_amount = Number((qty * userPrice).toFixed(2));
+        return ITEM_FIELDS.map((f) => (row[f] === undefined || row[f] === '' ? null : row[f]));
+      });
+  })();
 }
 
 // date 字段空字符串 → null
@@ -234,7 +252,7 @@ router.post(
     data.owner_name = ownerOf(req.operator);
     data.owner_id = req.operator.id;
 
-    const items = normalizeItems(req.body.items);
+    const items = await normalizeItems(req.body.items, pool);
     if (items.length === 0) return res.fail('请至少添加一行样品明细', 400);
 
     // 自动生成购销合同 + 生产任务单（样品单按「客户自行报关」逻辑，不生成订舱/清关/报关）
@@ -437,7 +455,7 @@ router.put(
       }
       if (hasItems) {
         await conn.query('DELETE FROM sample_items WHERE sample_id = ?', [req.params.id]);
-        const items = normalizeItems(req.body.items);
+        const items = await normalizeItems(req.body.items, pool);
         if (items.length) {
           await conn.query(
             `INSERT INTO sample_items (sample_id, ${ITEM_FIELDS.join(', ')}) VALUES ?`,

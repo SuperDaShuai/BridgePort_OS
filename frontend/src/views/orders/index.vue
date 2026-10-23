@@ -686,6 +686,14 @@ async function onSave() {
     if (form.value.id) {
       const r = await updateOrder(form.value.id, payload)
       ElMessage.success(r?.docs_generated ? '更新成功，已根据报关责任自动生成购销合同等单据默认数据' : '更新成功')
+      // 如果 PI 预览正开着，自动重建 piHtml 让打印拿到最新数据
+      if (piVisible.value && form.value.id) {
+        try {
+          const fresh = await getOrder(form.value.id)
+          piData.value = fresh
+          piHtml.value = buildPiHtml(fresh)
+        } catch { /* 忽略，下次打开再刷新 */ }
+      }
     }
     else { await createOrder(payload); ElMessage.success('创建成功') }
     dialogVisible.value = false; loadList()
@@ -741,7 +749,10 @@ function buildPiHtml(order) {
   `
 
   // BUYER + PI INFO 双栏
-  const buyerAddress = client.address_en || client.address || ''
+  // 地址优先用订单主表用户编辑的值（order.address），空时回退客户资料
+  const buyerAddress = (order.address && String(order.address).trim())
+    ? String(order.address).trim()
+    : (client.address_en || client.address || '')
   const buyerContact = [client.email ? 'Email: ' + client.email : '', client.tel ? 'Tel: ' + client.tel : ''].filter(Boolean).join(' ')
   const buyerBox = `
     <div style="border:1px solid #cbd5e1; padding:8px; border-radius:4px; line-height:1.6;">
