@@ -1062,6 +1062,7 @@ const migrations = [
   {
     id: 46,
     name: 'hs_codes_short_name',
+    desc: 'hs_codes 表新增 product_short_name（产品简称）列',
     async check(conn) {
       const [rows] = await conn.query(
         `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hs_codes' AND COLUMN_NAME = 'product_short_name'`
@@ -1081,6 +1082,7 @@ const migrations = [
   {
     id: 47,
     name: 'orders_shipping_mark',
+    desc: 'orders 表新增 shipping_mark（唛头）字段',
     async check(conn) {
       const [rows] = await conn.query(
         `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'shipping_mark'`
