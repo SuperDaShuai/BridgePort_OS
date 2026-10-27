@@ -1056,6 +1056,44 @@ const migrations = [
       const sql = fs.readFileSync(sqlPath, 'utf8');
       await runSQL(conn, sql);
     }
+  },
+
+  // 046 HS编码库新增产品简称字段
+  {
+    id: 46,
+    name: 'hs_codes_short_name',
+    async check(conn) {
+      const [rows] = await conn.query(
+        `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hs_codes' AND COLUMN_NAME = 'product_short_name'`
+      );
+      return rows[0].c > 0;
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '046_hs_codes_short_name.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
+  },
+
+  // 047 orders 表新增 shipping_mark（唛头）字段
+  {
+    id: 47,
+    name: 'orders_shipping_mark',
+    async check(conn) {
+      const [rows] = await conn.query(
+        `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'shipping_mark'`
+      );
+      return rows[0].c > 0;
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '047_orders_shipping_mark.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
   }
 ];
 

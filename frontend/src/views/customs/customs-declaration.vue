@@ -198,8 +198,12 @@
 
           <el-col :span="6"><el-form-item label="出运港 (Loading Port)"><el-input v-model="custForm.loading_port" placeholder="如：SHANGHAI" /></el-form-item></el-col>
           <el-col :span="6"><el-form-item label="目的港 (Discharge Port)"><el-input v-model="custForm.dest_port" placeholder="如：Manila" /></el-form-item></el-col>
-          <el-col :span="6"><el-form-item label="全局唛头 (Shipping Mark)"><el-input v-model="custForm.shipping_mark" type="textarea" :rows="1" placeholder="支持换行" /></el-form-item></el-col>
-          <el-col :span="6"><el-form-item label="英文总价表示方式"><el-input v-model="custForm.total_amount_en" type="textarea" :rows="1" placeholder="留空则按总金额自动生成" /></el-form-item></el-col>
+        </el-row>
+        <el-row :gutter="16">
+          <el-col :span="24"><el-form-item label="全局唛头 (Shipping Mark)"><el-input v-model="custForm.shipping_mark" type="textarea" :rows="2" placeholder="支持多行换行，自动关联订单的 Shipping Mark" /></el-form-item></el-col>
+        </el-row>
+        <el-row :gutter="16">
+          <el-col :span="24"><el-form-item label="英文总价表示方式"><el-input v-model="custForm.total_amount_en" type="textarea" :rows="1" placeholder="留空则按总金额自动生成" /></el-form-item></el-col>
         </el-row>
 
         <div class="items-section">
@@ -226,9 +230,6 @@
             </el-table-column>
             <el-table-column label="CBM" width="100">
               <template #default="{ row }"><el-input-number v-model="row.cbm" :min="0" :precision="3" :step="0.001" :controls="false" size="small" style="width:100%" /></template>
-            </el-table-column>
-            <el-table-column label="Shipping Mark" width="120">
-              <template #default="{ row }"><el-input v-model="row.shipping_mark" size="small" /></template>
             </el-table-column>
             <el-table-column label="单价 ($)" width="110">
               <template #default="{ row }"><el-input-number v-model="row.price" :min="0" :precision="2" :controls="false" size="small" style="width:100%" @change="calcCustRow(row)" /></template>
@@ -384,7 +385,7 @@ async function getOrderDocs(row) {
       loading_port: (detail.loading_port || '').toUpperCase(),
       dest_port: detail.destination_port || '',
       shipping_method: 'By sea',
-      shipping_mark: 'N/M',
+      shipping_mark: detail.shipping_mark && String(detail.shipping_mark).trim() ? String(detail.shipping_mark).trim() : 'N/M',
       total_amount_en: '',
       items: grouped.map((g) => ({ product: g.product, qty: g.qty, ctn: g.ctn, nw: g.nw, gw: g.gw, cbm: g.cbm, shipping_mark: g.shipping_mark, price: g.price, total: g.total }))
     }

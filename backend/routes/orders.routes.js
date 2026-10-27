@@ -10,7 +10,7 @@ const ALLOWED = [
   'pi_number', 'signing_date', 'client_id', 'supplier_id',
   'currency', 'trade_terms', 'customs_responsibility', 'bank_account_id', 'alipay_qrcode',
   'payment_terms', 'delivery_date', 'loading_port', 'destination_port',
-  'packing_desc', 'special_req', 'show_special_req', 'show_stamp', 'show_hs_code',
+  'packing_desc', 'special_req', 'shipping_mark', 'show_special_req', 'show_stamp', 'show_hs_code',
   'total_amount', 'current_node', 'progress_percent', 'quotation_id',
   'purchase_contract', 'production_order', 'booking_data', 'customs_data', 'decl_data'
 ];

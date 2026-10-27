@@ -1,4 +1,4 @@
-﻿<template>
+﻿﻿<template>
   <el-card shadow="never" class="page-card">
     <!-- 工具栏 -->
     <div class="toolbar">
@@ -19,7 +19,10 @@
     <!-- 列表 -->
     <el-table v-loading="loading" :data="list" border stripe>
       <el-table-column prop="hs_code" label="HS编码" width="140" />
-      <el-table-column prop="product_name" label="HS产品名称" min-width="220" show-overflow-tooltip />
+      <el-table-column prop="product_name" label="HS产品名称" min-width="180" show-overflow-tooltip />
+      <el-table-column prop="product_short_name" label="产品简称" width="140" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.product_short_name || '—' }}</template>
+      </el-table-column>
       <el-table-column label="申报要素" min-width="300">
         <template #default="{ row }">
           <div class="decl-text">{{ row.declaration_elements || '—' }}</div>
@@ -59,6 +62,9 @@
         </el-form-item>
         <el-form-item label="HS产品名称" prop="product_name">
           <el-input v-model="form.product_name" placeholder="如：其他电气信号装置" />
+        </el-form-item>
+        <el-form-item label="产品简称" prop="product_short_name">
+          <el-input v-model="form.product_short_name" placeholder="如：电信号装置（可选）" maxlength="100" />
         </el-form-item>
         <el-form-item label="申报要素" prop="declaration_elements">
           <el-input
@@ -105,7 +111,7 @@ const rules = {
 }
 
 const blankForm = () => ({
-  hs_code: '', product_name: '', declaration_elements: ''
+  hs_code: '', product_name: '', product_short_name: '', declaration_elements: ''
 })
 
 async function loadList() {

@@ -4,7 +4,7 @@ const { asyncHandler, parsePagination, pickFields } = require('../utils/helpers'
 
 const router = express.Router();
 
-const ALLOWED = ['hs_code', 'product_name', 'declaration_elements'];
+const ALLOWED = ['hs_code', 'product_name', 'product_short_name', 'declaration_elements'];
 
 // HS 编码库对业务员（等级≥3）只读：写操作统一拦截
 function denyReadOnly(req, res) {

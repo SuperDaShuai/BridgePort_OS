@@ -177,15 +177,22 @@
             <el-input v-model="form.destination_port" placeholder="选择客户后自动填充" />
           </el-form-item>
         </div>
-        <div class="form-grid-2">
+        <div class="form-grid-1">
           <el-form-item label="包装说明">
             <el-input v-model="form.packing_desc" placeholder="如: Standard Neutral Export Cartons" />
           </el-form-item>
+        </div>
+        <div class="form-grid-1">
           <el-form-item label="特殊要求">
-            <el-input v-model="form.special_req" type="textarea" :rows="2" placeholder="SPECIAL REQUIREMENTS" />
+            <el-input v-model="form.special_req" type="textarea" :rows="3" placeholder="SPECIAL REQUIREMENTS" />
           </el-form-item>
         </div>
-        <div class="form-grid-2">
+        <div class="form-grid-1">
+          <el-form-item label="Shipping Mark 唛头">
+            <el-input v-model="form.shipping_mark" type="textarea" :rows="3" placeholder="填写外箱唛头内容，支持多行" />
+          </el-form-item>
+        </div>
+        <div class="form-grid-3">
           <el-form-item label="PI 显示特殊要求"><el-switch v-model="form.show_special_req" /></el-form-item>
           <el-form-item label="PI 显示电子签章"><el-switch v-model="form.show_stamp" /></el-form-item>
           <el-form-item label="PI 显示HS编码"><el-switch v-model="form.show_hs_code" /></el-form-item>
@@ -371,6 +378,7 @@ const blankForm = () => ({
   loading_port: 'Ningbo, China', destination_port: '',
   packing_desc: 'Standard Neutral Export Cartons',
   special_req: 'Standard requirements.',
+  shipping_mark: '',
   show_special_req: true, show_stamp: true, show_hs_code: false,
   total_amount: undefined, quotation_id: null, items: [], owner_name: ''
 })
@@ -860,6 +868,14 @@ function buildPiHtml(order) {
     </div>
   ` : ''
 
+  // SHIPPING MARK（有内容就显示，独占一块）
+  const shippingMark = (order.shipping_mark && String(order.shipping_mark).trim()) ? `
+    <div style="margin-top:12px; font-size:10.5px; line-height:1.5;">
+      <div style="font-weight:bold; margin-bottom:4px; color:#1e40af;">SHIPPING MARK:</div>
+      <div style="white-space:pre-wrap; color:#334155; border:1px dashed #94a3b8; padding:8px; background:#f8fafc;">${order.shipping_mark}</div>
+    </div>
+  ` : ''
+
   // BENEFICIARY BANK —— 支付宝模式仅显示收款二维码；否则使用收款路线库「路由备注」（保留换行）；
   // 路由备注为空时回落到结构化银行行
   const bankHtml = order.alipay_qrcode ? `
@@ -927,7 +943,7 @@ function buildPiHtml(order) {
 
   return header +
     `<div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:12px; font-size:11px;">${buyerBox}${piInfoBox}</div>` +
-    table + sayTotal + totalStats + specialReq + bankHtml + awardClause + arbitration + signatures
+    table + sayTotal + totalStats + specialReq + shippingMark + bankHtml + awardClause + arbitration + signatures
 }
 
 function onPrint() {
@@ -972,8 +988,10 @@ onMounted(() => { loadList(); loadOptions() })
 
 <style scoped>
 .opt-sub { color: #909399; font-size: 12px; }
-.form-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 16px; }
+.form-grid-1 { display: grid; grid-template-columns: 1fr; gap: 0 16px; }
 .form-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 16px; }
+.form-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 16px; }
+.form-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 16px; }
 .divider-title { display: flex; justify-content: space-between; align-items: center; width: 100%; font-size: 14px; font-weight: 600; padding-right: 10px; }
 .items-table { font-size: 12px; }
 .items-table .el-table__cell { padding: 4px 6px; }

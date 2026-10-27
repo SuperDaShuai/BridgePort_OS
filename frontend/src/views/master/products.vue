@@ -199,7 +199,7 @@
                 <el-option
                   v-for="h in hsCodeOptions"
                   :key="h.id"
-                  :label="h.hs_code"
+                  :label="`${h.hs_code} - ${h.product_name || ''}`"
                   :value="h.hs_code"
                 />
               </el-select>
