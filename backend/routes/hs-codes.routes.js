@@ -57,17 +57,8 @@ router.post(
     if (!data.hs_code) return res.fail('HS编码为必填', 400);
     if (!data.product_name) return res.fail('HS产品名称为必填', 400);
 
-    // 唯一约束：先查重复（MySQL ER_DUP_ENTRY 兜底）
-    const [[dup]] = await pool.query('SELECT id FROM hs_codes WHERE hs_code = ?', [data.hs_code]);
-    if (dup) return res.fail(`HS编码 ${data.hs_code} 已存在（ID=${dup.id}）`, 409);
-
-    try {
-      const [r] = await pool.query('INSERT INTO hs_codes SET ?', data);
-      res.success({ id: r.insertId }, '创建成功');
-    } catch (e) {
-      if (e.code === 'ER_DUP_ENTRY') return res.fail(`HS编码 ${data.hs_code} 已存在`, 409);
-      throw e;
-    }
+    const [r] = await pool.query('INSERT INTO hs_codes SET ?', data);
+    res.success({ id: r.insertId }, '创建成功');
   })
 );
 
@@ -79,20 +70,9 @@ router.put(
     const data = pickFields(req.body, ALLOWED);
     if (Object.keys(data).length === 0) return res.fail('无可更新字段', 400);
 
-    // 如果改了 hs_code，检查是否与其他记录冲突
-    if (data.hs_code !== undefined) {
-      const [[dup]] = await pool.query('SELECT id FROM hs_codes WHERE hs_code = ? AND id != ?', [data.hs_code, req.params.id]);
-      if (dup) return res.fail(`HS编码 ${data.hs_code} 已被 ID=${dup.id} 占用`, 409);
-    }
-
-    try {
-      const [r] = await pool.query('UPDATE hs_codes SET ? WHERE id = ?', [data, req.params.id]);
-      if (r.affectedRows === 0) return res.fail('HS编码记录不存在', 404);
-      res.success({ id: Number(req.params.id) }, '更新成功');
-    } catch (e) {
-      if (e.code === 'ER_DUP_ENTRY') return res.fail(`HS编码 ${data.hs_code} 已被占用`, 409);
-      throw e;
-    }
+    const [r] = await pool.query('UPDATE hs_codes SET ? WHERE id = ?', [data, req.params.id]);
+    if (r.affectedRows === 0) return res.fail('HS编码记录不存在', 404);
+    res.success({ id: Number(req.params.id) }, '更新成功');
   })
 );
 

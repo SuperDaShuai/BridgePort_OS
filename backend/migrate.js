@@ -1096,6 +1096,26 @@ const migrations = [
       const sql = fs.readFileSync(sqlPath, 'utf8');
       await runSQL(conn, sql);
     }
+  },
+
+  // 048 移除 hs_codes 的 hs_code 唯一索引（允许同一 HS 编码对应多条记录）
+  {
+    id: 48,
+    name: 'hs_codes_drop_unique',
+    desc: '移除 hs_codes 表 uk_hs_code 唯一索引，允许 HS 编码重复',
+    async check(conn) {
+      const [rows] = await conn.query(
+        `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hs_codes' AND INDEX_NAME = 'uk_hs_code'`
+      );
+      return rows[0].c === 0; // 索引不存在 = 已完成
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '048_hs_codes_drop_unique.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
   }
 ];
 
