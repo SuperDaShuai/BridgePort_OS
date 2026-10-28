@@ -204,7 +204,7 @@ router.get(
        FROM order_items oi
        LEFT JOIN products p ON oi.product_id = p.id
        LEFT JOIN suppliers s ON p.supplier_id = s.id
-       LEFT JOIN hs_codes h ON p.hs_code = h.hs_code
+       LEFT JOIN hs_codes h ON p.hs_code COLLATE utf8mb4_general_ci = h.hs_code COLLATE utf8mb4_general_ci
        WHERE oi.order_id = ?
        GROUP BY oi.id
        ORDER BY oi.id ASC`,
