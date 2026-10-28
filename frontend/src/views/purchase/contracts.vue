@@ -443,18 +443,29 @@ async function loadList() {
       const rowKey = `${row.ref_type}-${row.id || row.ref_number}`
       const subs = Array.isArray(pc.sub_contracts) ? pc.sub_contracts : []
       if (subs.length > 0) {
+        // 隐藏未指定供应商的子合同（supplier_id 为空/null）
+        const activeSubs = subs.filter(sc => sc.supplier_id)
+        if (activeSubs.length === 0) {
+          // 全未指定：退化为单行显示
+          return {
+            ...row,
+            rowKey,
+            supplier_id: row.supplier_id || pc.supplier_id || null,
+            supplier_name: row.supplier_name || pc.supplier_name || ''
+          }
+        }
         return {
           ...row,
           rowKey,
           is_parent: true,
-          children: subs.map((sc, i) => ({
+          children: activeSubs.map((sc, i) => ({
             ...row,
             rowKey: `${rowKey}-sub-${i}`,
             is_sub: true,
             sub_contract: sc,
             supplier_id: sc.supplier_id,
             supplier_name: sc.supplier_name,
-            sub_index: i
+            sub_index: subs.indexOf(sc) // 保留原始索引（与 JSON 中位置对应）
           }))
         }
       }

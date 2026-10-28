@@ -1,9 +1,9 @@
-<template>
+﻿﻿<template>
   <el-card shadow="never" class="page-card">
     <!-- 页面标题（仿参考项目） -->
     <div class="page-header">
       <h2 class="page-title">出口报关单据套件 (Export Customs Documents)</h2>
-      <p class="page-subtitle">自动关联订单生成报关草单、Commercial Invoice、Packing List 及 Sales Contract（商品按 HS 编码归并）</p>
+      <p class="page-subtitle">自动关联订单生成报关草单、Commercial Invoice、Packing List 及 Sales Contract（订单每条产品独立一行，不按 HS 编码合并）</p>
     </div>
 
     <!-- 列表（图1样式） -->
@@ -140,7 +140,7 @@
 
         <div class="items-section">
           <div class="items-section-head">
-            <strong>报关商品要素清单（按 HS 编码归并）</strong>
+            <strong>报关商品要素清单（每条订单产品单独一行）</strong>
             <el-button type="primary" size="small" :icon="Plus" @click="addDeclRow">添加申报行</el-button>
           </div>
           <el-table :data="declForm.items" border size="small">
@@ -208,7 +208,7 @@
 
         <div class="items-section">
           <div class="items-section-head">
-            <strong>商品明细（按 HS 编码归并，不含图片）</strong>
+            <strong>商品明细（每条订单产品单独一行）</strong>
             <el-button type="primary" size="small" :icon="Plus" @click="addCustRow">添加商品行</el-button>
           </div>
           <el-table :data="custForm.items" border size="small">
@@ -241,6 +241,13 @@
               <template #default="{ $index }"><el-button link type="danger" size="small" @click="custForm.items.splice($index, 1)">✕</el-button></template>
             </el-table-column>
           </el-table>
+
+          <!-- 订单实时汇总：仅总毛重/总净重/总金额，靠右显示 -->
+          <div class="order-summary-bar">
+            <span>总毛重 <b>{{ totals.gw || 0 }} kg</b></span>
+            <span>总净重 <b>{{ totals.nw || 0 }} kg</b></span>
+            <span>总金额 <b>${{ formatMoney(totals.amount || 0) }}</b></span>
+          </div>
         </div>
       </el-form>
 
@@ -253,7 +260,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Printer, Download, Edit, Plus } from '@element-plus/icons-vue'
 import { listOrders, getOrder, updateOrder } from '@/api/orders'
@@ -286,6 +293,19 @@ const declForm = ref({ items: [] })
 const custForm = ref({ items: [] })
 const editingOrderId = ref(null)
 
+// 汇总条 computed：基于 custForm.items 实时计算（清关外销单据编辑弹窗内）
+const totals = computed(() => {
+  const items = custForm.value.items || []
+  return {
+    qty: items.reduce((s, it) => s + (Number(it.qty) || 0), 0),
+    ctn: items.reduce((s, it) => s + (Number(it.ctn) || 0), 0),
+    nw: items.reduce((s, it) => s + (Number(it.nw) || 0), 0),
+    gw: items.reduce((s, it) => s + (Number(it.gw) || 0), 0),
+    cbm: items.reduce((s, it) => s + (Number(it.cbm) || 0), 0),
+    amount: items.reduce((s, it) => s + (Number(it.total) || 0), 0)
+  }
+})
+
 /* ========== 工具 ========== */
 function parseDoc(v) {
   if (!v) return null
@@ -295,43 +315,42 @@ function parseDoc(v) {
   return v
 }
 
-/* HS 编码归并（与后端 groupItemsByHs 同逻辑，用于旧数据/未保存时实时构建） */
-function groupItemsByHs(items) {
-  const map = new Map()
-  ;(items || []).forEach((it) => {
-    const key = (String(it.hs_code || '').trim()) || 'N/A'
-    const qty = Number(it.qty || 0)          // 报价单 MOQ（订单场景 qty = MOQ）
-    const pcs = Number(it.pcs_per_ctn) || 1   // 件/箱
-    // 件数 = MOQ ÷ 件/箱（直接相除，不再使用 it.ctns 兜底或 Math.ceil 取整）
+/* 展平：每条订单 item 单独一行，不按 HS 编码归并 */
+function flatItemsFromOrder(items, kind) {
+  return (items || []).map((it) => {
+    const qty = Number(it.qty || 0)
+    const pcs = Number(it.pcs_per_ctn) || 1
     const ctns = pcs > 0 ? qty / pcs : 0
-    if (!map.has(key)) {
-      map.set(key, { hs_code: key, models: [], names: [], specs: [], units: [], qty: 0, ctn: 0, nw: 0, gw: 0, cbm: 0, amount: 0 })
+    const hsCode = it.hs_code || it.product_hs_code || ''
+    const model = it.model || it.supplier_model || it.product_our_model || ''
+    const name = it.name_en || it.name || ''
+    const spec = it.spec || ''
+    const unit = it.unit || '台'
+    const nw = ctns * Number(it.nw_per_ctn || 0)
+    const gw = ctns * Number(it.gw_per_ctn || 0)
+    const cbm = ctns * Number(it.cbm_per_ctn || 0)
+    const price = Number(it.price || 0) || Number(it.cost_cny || 0)
+    const total = Number((qty * price).toFixed(2))
+
+    if (kind === 'decl') {
+      // 商品名称：优先用 hs_codes 标准品名，拿不到则 fallback 旧的产品名拼接
+      const hsProductName = it.hs_product_name || ''
+      const fallbackName = model + (spec ? ' / ' + spec : name ? ' / ' + name : '')
+      return {
+        hs_code: hsCode,
+        name: hsProductName || fallbackName,
+        qty, unit, price, total,
+        currency: 'USD', origin_country: '中国',
+        dest_country: '', origin_source: '', levy: '征税',
+        elements: it.hs_elements || ''
+      }
     }
-    const g = map.get(key)
-    g.qty += qty
-    g.ctn += ctns
-    g.nw += ctns * Number(it.nw_per_ctn || 0)
-    g.gw += ctns * Number(it.gw_per_ctn || 0)
-    g.cbm += ctns * Number(it.cbm_per_ctn || 0)
-    g.amount += qty * Number(it.price || 0)
-    if (it.model) g.models.push(String(it.model))
-    if (it.name_en) g.names.push(String(it.name_en))
-    if (it.spec) g.specs.push(String(it.spec))
-    if (it.unit) g.units.push(String(it.unit))
-  })
-  const uniq = (a) => [...new Set(a.filter((x) => x && String(x).trim()))]
-  return [...map.values()].map((g) => {
-    const models = uniq(g.models), names = uniq(g.names), specs = uniq(g.specs), units = uniq(g.units)
     return {
-      hs_code: g.hs_code === 'N/A' ? '' : g.hs_code,
-      product: names.join(' / ') + (models.length ? ' (' + models.join('/') + ')' : ''),
-      name: models.join('/') + (specs.length ? ' / ' + specs.join(' / ') : names.length ? ' / ' + names.join(' / ') : ''),
-      qty: g.qty, ctn: Number(g.ctn.toFixed(2)),
-      nw: Number(g.nw.toFixed(2)), gw: Number(g.gw.toFixed(2)), cbm: Number(g.cbm.toFixed(3)),
-      shipping_mark: 'N/M',
-      unit: units[0] || '台',
-      price: g.qty ? Number((g.amount / g.qty).toFixed(2)) : 0,
-      total: Number(g.amount.toFixed(2))
+      product: (name || '') + (model ? ' (' + model + ')' : ''),
+      qty, ctn: Number(ctns.toFixed(2)),
+      nw: Number(nw.toFixed(2)), gw: Number(gw.toFixed(2)), cbm: Number(cbm.toFixed(3)),
+      price, total,
+      unit
     }
   })
 }
@@ -364,75 +383,124 @@ async function loadOptions() {
   } catch { /* 拦截器 */ }
 }
 
-/* ========== 构建/读取单据数据（已保存优先，否则实时归并） ========== */
+/* ========== 构建/读取单据数据（已保存优先，但 items 每次实时从订单重建） ========== */
 async function getOrderDocs(row) {
   const detail = await getOrder(row.id)
   const company = companySettings.value || {}
   const client = clientOptions.value.find((c) => c.id === detail.client_id) || {}
   const totals = getOrderTotals(detail)
-  const grouped = groupItemsByHs(detail.items)
+  // 每条订单 item 单独一行，不按 HS 编码归并
+  const flatDecl = flatItemsFromOrder(detail.items, 'decl')
+  const flatCust = flatItemsFromOrder(detail.items, 'cust')
 
-  let customs = parseDoc(detail.customs_data)
-  if (!customs) {
-    customs = {
-      client_id: detail.client_id,
-      sc_no: detail.pi_number + 'SC',
-      inv_no: detail.pi_number + 'INV',
-      date: detail.signing_date || '',
-      payment_terms: detail.payment_terms || 'T/T',
-      price_terms: (detail.trade_terms || 'FOB') + (detail.loading_port ? ' ' + detail.loading_port : ''),
-      loading_time: detail.delivery_date || '',
-      loading_port: (detail.loading_port || '').toUpperCase(),
-      dest_port: detail.destination_port || '',
-      shipping_method: 'By sea',
-      shipping_mark: detail.shipping_mark && String(detail.shipping_mark).trim() ? String(detail.shipping_mark).trim() : 'N/M',
-      total_amount_en: '',
-      items: grouped.map((g) => ({ product: g.product, qty: g.qty, ctn: g.ctn, nw: g.nw, gw: g.gw, cbm: g.cbm, shipping_mark: g.shipping_mark, price: g.price, total: g.total }))
-    }
+  // ===== 商业发票/装箱单 =====
+  const savedCustoms = parseDoc(detail.customs_data)
+  const customs = savedCustoms ? {
+    ...savedCustoms,
+    items: mergeItems(savedCustoms.items, flatCust, 'customs')
+  } : {
+    client_id: detail.client_id,
+    sc_no: detail.pi_number + 'SC',
+    inv_no: detail.pi_number + 'INV',
+    date: detail.signing_date || '',
+    payment_terms: detail.payment_terms || 'T/T',
+    price_terms: (detail.trade_terms || 'FOB') + (detail.loading_port ? ' ' + detail.loading_port : ''),
+    loading_time: detail.delivery_date || '',
+    loading_port: (detail.loading_port || '').toUpperCase(),
+    dest_port: detail.destination_port || '',
+    shipping_method: 'By sea',
+    shipping_mark: detail.shipping_mark && String(detail.shipping_mark).trim() ? String(detail.shipping_mark).trim() : 'N/M',
+    total_amount_en: '',
+    items: flatCust
   }
 
-  let decl = parseDoc(detail.decl_data)
-  if (!decl) {
-    const totalCtns = Number(grouped.reduce((s, g) => s + (Number(g.ctn) || 0), 0).toFixed(2))
-    const totalNw = Number(grouped.reduce((s, g) => s + (Number(g.nw) || 0), 0).toFixed(2))
-    const totalGw = Number(grouped.reduce((s, g) => s + (Number(g.gw) || 0), 0).toFixed(2))
-    decl = {
-      broker: '', pre_entry_no: '', customs_no: '',
-      shipper: company.name_cn || '',
-      exit_customs: (detail.loading_port || '').toUpperCase().includes('SHANGHAI') ? '上海海关' : (detail.loading_port || '').toUpperCase().includes('NINGBO') ? '宁波海关' : '',
-      export_date: '', declare_date: detail.signing_date || '', record_no: '',
-      consignee: client.name_en || client.name || '',
-      country: client.country || '',
-      transport_mode: '海运', vessel_voyage: '', bill_no: '',
-      manufacturer: detail.supplier_name || '',
-      supervision_mode: '一般贸易', levy_nature: '一般征税', license_no: '',
-      // 新增：合同协议号/贸易国/指运港
-      contract_no: detail.pi_number || '',
-      trade_country: client.country || '',
-      dest_country: client.country || '',
-      dest_port: detail.destination_port || '',
-      exit_port: (detail.loading_port || '').toUpperCase(),
-      // 新增：包装种类行
-      pack_type: '纸箱', total_packages: totalCtns, gross_weight: totalGw, net_weight: totalNw,
-      trade_mode: detail.trade_terms || 'FOB',
-      freight: '', insurance: '', misc_fees: '',
-      // 新增：随附单证 + 标记唛码
-      attached_docs_1: '', attached_docs_2: '',
-      shipping_marks_notes: 'N/M',
-      // 商品表扩展
-      dest_country_name: client.country || '', origin_source: '', levy: '征税',
-      special_relation: '否', price_affect: '否', royalty: '否', self_declare: '是',
-      declarer: '', declarer_no: '', declarer_tel: company.tel || '', declare_unit: company.name_cn || '',
-      currency: detail.currency || 'USD', origin_country: '中国',
-      items: grouped.map((g) => ({
-        hs_code: g.hs_code, name: g.name, qty: g.qty, unit: g.unit, price: g.price, total: g.total,
-        currency: detail.currency || 'USD', origin_country: '中国',
-        dest_country: client.country || '', origin_source: '', levy: '征税', elements: ''
-      }))
-    }
+  // ===== 出口报关草单 =====
+  const savedDecl = parseDoc(detail.decl_data)
+  // 按实时 items 重新算总毛净重
+  const sum = (arr, k) => Number(arr.reduce((s, g) => s + (Number(g[k]) || 0), 0).toFixed(2))
+  const totalCtns = sum(flatCust, 'ctn')
+  const totalNw = sum(flatCust, 'nw')
+  const totalGw = sum(flatCust, 'gw')
+  const decl = savedDecl ? {
+    ...savedDecl,
+    items: mergeItems(savedDecl.items, flatDecl, 'decl'),
+    total_packages: savedDecl.total_packages || totalCtns,
+    gross_weight: savedDecl.gross_weight || totalGw,
+    net_weight: savedDecl.net_weight || totalNw
+  } : {
+    broker: '', pre_entry_no: '', customs_no: '',
+    shipper: company.name_cn || '',
+    exit_customs: (detail.loading_port || '').toUpperCase().includes('SHANGHAI') ? '上海海关' : (detail.loading_port || '').toUpperCase().includes('NINGBO') ? '宁波海关' : '',
+    export_date: '', declare_date: detail.signing_date || '', record_no: '',
+    consignee: client.name_en || client.name || '',
+    country: client.country || '',
+    transport_mode: '海运', vessel_voyage: '', bill_no: '',
+    manufacturer: detail.supplier_name || '',
+    supervision_mode: '一般贸易', levy_nature: '一般征税', license_no: '',
+    contract_no: detail.pi_number || '',
+    trade_country: client.country || '',
+    dest_country: client.country || '',
+    dest_port: detail.destination_port || '',
+    exit_port: (detail.loading_port || '').toUpperCase(),
+    pack_type: '纸箱', total_packages: totalCtns, gross_weight: totalGw, net_weight: totalNw,
+    trade_mode: detail.trade_terms || 'FOB',
+    freight: '', insurance: '', misc_fees: '',
+    attached_docs_1: '', attached_docs_2: '',
+    shipping_marks_notes: 'N/M',
+    dest_country_name: client.country || '', origin_source: '', levy: '征税',
+    special_relation: '否', price_affect: '否', royalty: '否', self_declare: '是',
+    declarer: '', declarer_no: '', declarer_tel: company.tel || '', declare_unit: company.name_cn || '',
+    currency: detail.currency || 'USD', origin_country: '中国',
+    items: flatDecl
   }
 
   return { detail, company, client, totals, customs, decl }
+}
+
+/**
+ * 合并 items：用实时 flat 作为基准（保证订单所有产品都进来），
+ * 如果已保存的 saved 里能按位置或 hs_code 对上，保留用户编辑过的字段。
+ * 订单里删掉的产品自动消失，新增的产品自动出现。
+ */
+function mergeItems(savedItems, flat, kind) {
+  const saved = Array.isArray(savedItems) ? savedItems : []
+
+  // 简单策略：按位置对齐（flat[i] 对 saved[i]），同时保留 saved[i] 的用户编辑值
+  return flat.map((g, i) => {
+    const savedMatch = saved[i]
+
+    if (!savedMatch) {
+      // 新增的产品，用实时 flat 值
+      if (kind === 'decl') {
+        return { hs_code: g.hs_code, name: g.name, qty: g.qty, unit: g.unit, price: g.price, total: g.total, currency: 'USD', origin_country: '中国', dest_country: '', origin_source: '', levy: '征税', elements: g.elements || '' }
+      }
+      return { product: g.product, qty: g.qty, ctn: g.ctn, nw: g.nw, gw: g.gw, cbm: g.cbm, price: g.price, total: g.total, unit: g.unit }
+    }
+
+    // 有匹配：保留用户编辑字段（非空非零），基础信息用实时值
+    if (kind === 'decl') {
+      return {
+        ...savedMatch,
+        hs_code: g.hs_code,
+        name: g.name,
+        qty: savedMatch.qty !== undefined && savedMatch.qty !== '' && Number(savedMatch.qty) > 0 ? savedMatch.qty : g.qty,
+        unit: savedMatch.unit || g.unit,
+        price: savedMatch.price !== undefined && savedMatch.price !== '' && Number(savedMatch.price) > 0 ? savedMatch.price : g.price,
+        total: savedMatch.total !== undefined && savedMatch.total !== '' && Number(savedMatch.total) > 0 ? savedMatch.total : g.total,
+        // 申报要素优先用户编辑值，为空则回退到 HS 编码库实时值
+        elements: (savedMatch.elements && savedMatch.elements.trim()) ? savedMatch.elements : (g.elements || '')
+      }
+    }
+    return {
+      ...savedMatch,
+      product: g.product,
+      qty: savedMatch.qty !== undefined && savedMatch.qty !== '' && Number(savedMatch.qty) > 0 ? savedMatch.qty : g.qty,
+      ctn: g.ctn, nw: g.nw, gw: g.gw, cbm: g.cbm,
+      price: savedMatch.price !== undefined && savedMatch.price !== '' && Number(savedMatch.price) > 0 ? savedMatch.price : g.price,
+      total: savedMatch.total !== undefined && savedMatch.total !== '' && Number(savedMatch.total) > 0 ? savedMatch.total : g.total,
+      unit: savedMatch.unit || g.unit
+    }
+  })
 }
 
 /* ========== 预览 ========== */
@@ -570,19 +638,28 @@ function sayTotalText(customs, totals, currency) {
   return 'SAY TOTAL ' + ccy + ' ' + numberToEnglishWords(totals.amount) + ' ONLY'
 }
 
-function markBoxHtml(customs, totals) {
-  const mark = (customs.shipping_mark && customs.shipping_mark !== 'N/M') ? customs.shipping_mark : 'N/M'
+function markBoxHtml(customs) {
+  const mark = (customs.shipping_mark && String(customs.shipping_mark).trim())
+    ? customs.shipping_mark
+    : 'N/M'
   return `
     <table class="mark-box">
       <tr>
-        <td style="width:22%; font-weight:bold;">Shipping Mark</td>
-        <td style="white-space:pre-wrap;">${mark}<br><br>
-          GROSS WEIGHT: ${Number(totals.gw).toFixed(1)} KGS&nbsp;&nbsp;&nbsp;NET WEIGHT: ${Number(totals.nw).toFixed(1)} KGS<br>
-          CARTON# OF ${totals.ctn}<br>
-          MEASUREMENT: ${Number(totals.cbm).toFixed(3)} CBM
-        </td>
+        <td style="width:22%; font-weight:bold; text-align:center; vertical-align:middle;">Shipping Mark</td>
+        <td style="white-space:pre-wrap; text-align:left; vertical-align:middle;">${mark}</td>
       </tr>
     </table>`
+}
+
+/** 右下角电子签章：仅当 company.seal_img 存在时输出 */
+function sealBlock(company) {
+  if (!company || !company.seal_img) return ''
+  return `
+    <div style="margin-top:24px; display:flex; justify-content:flex-end; position:relative;">
+      <div style="position:relative; width:220px; height:110px;">
+        <img src="${company.seal_img}" style="position:absolute; right:0; bottom:0; max-width:220px; max-height:110px; transform:rotate(-5deg); opacity:0.95;" alt="SEAL" />
+      </div>
+    </div>`
 }
 
 /* ---------- Commercial Invoice ---------- */
@@ -604,7 +681,7 @@ function buildCiHtml(docs) {
       ${docHead(company, 'COMMERCIAL INVOICE')}
       <table class="info">
         <tr>
-          <td style="width:60%;"><strong>BUYER:</strong> ${client.name_en || client.name || ''}<br>${buyerAddr}</td>
+          <td style="width:60%;"><strong>BUYER:</strong><br><strong>${client.name_en || client.name || ''}</strong><br>${buyerAddr}</td>
           <td><strong>INVOICE No.:</strong> ${customs.inv_no || ''}<br><strong>Date:</strong> ${customs.date || ''}<br><strong>Payment term:</strong> ${customs.payment_terms || 'T/T'}</td>
         </tr>
       </table>
@@ -619,9 +696,9 @@ function buildCiHtml(docs) {
           </tr>
         </tbody>
       </table>
-      ${markBoxHtml(customs, t)}
-      <div class="made-in">Made in China</div>
+      ${markBoxHtml(customs)}
       <div class="say-total">${sayTotalText(customs, t, detail.currency)}</div>
+      ${sealBlock(company)}
     </div>`
 }
 
@@ -648,7 +725,7 @@ function buildScHtml(docs) {
       ${docHead(company, 'SALES CONTRACT')}
       <table class="info">
         <tr>
-          <td style="width:60%;"><strong>Buyer:</strong> ${client.name_en || client.name || ''}<br>${buyerAddr}</td>
+          <td style="width:60%;"><strong>Buyer:</strong><br><strong>${client.name_en || client.name || ''}</strong><br>${buyerAddr}</td>
           <td><strong>S/C NO.:</strong> ${customs.sc_no || ''}<br><strong>Date:</strong> ${customs.date || ''}<br><strong>Payment Term:</strong> ${customs.payment_terms || 'T/T'}</td>
         </tr>
         <tr>
@@ -675,8 +752,9 @@ function buildScHtml(docs) {
           </tr>
         </tbody>
       </table>
-      ${markBoxHtml(customs, t)}
+      ${markBoxHtml(customs)}
       <div class="say-total">${sayTotalText(customs, t, detail.currency)}</div>
+      ${sealBlock(company)}
     </div>`
 }
 
@@ -701,7 +779,7 @@ function buildPlHtml(docs) {
       ${docHead(company, 'PACKING LIST')}
       <table class="info">
         <tr>
-          <td style="width:60%;"><strong>Buyer:</strong> ${client.name_en || client.name || ''}<br>${buyerAddr}</td>
+          <td style="width:60%;"><strong>Buyer:</strong><br><strong>${client.name_en || client.name || ''}</strong><br>${buyerAddr}</td>
           <td><strong>INVOICE NO.:</strong> ${customs.inv_no || ''}<br><strong>DATE:</strong> ${customs.date || ''}</td>
         </tr>
         <tr>
@@ -725,224 +803,226 @@ function buildPlHtml(docs) {
           </tr>
         </tbody>
       </table>
-      ${markBoxHtml(customs, t)}
-      <div class="made-in">Made in China</div>
+      ${markBoxHtml(customs)}
+      ${sealBlock(company)}
     </div>`
 }
 
-/* ---------- 出口报关草单（中华人民共和国海关出口货物报关单，严格仿 PDF 版式） ---------- */
+/* ---------- 出口报关草单（中华人民共和国海关出口货物报关单，严格仿 PDF 13 列版式） ----------
+   列宽来自 PDF 实测 800pt 宽表格（841.85pt A4 横向页面）：
+   c0 8.35%  c1 9.94%  c2 13.56%  c3 7.58%  c4 7.48%  c5 7.87%
+   c6 7.09%  c7 7.37%  c8 5.61%   c9 5.12%  c10 6.79% c11 6.60% c12 6.65%
+*/
 function buildDeclHtml(docs) {
   const { decl, company } = docs
   const items = decl.items || []
 
-  // 商品表 12 列 HTML（每项商品行 + 下方申报要素子行）
-  const itemRowsHtml = items.map((it, i) => {
+  // 辅助：带标签的单元格（标签 + 值在同一个 td 内，标签灰底加粗显示）
+  const labeledCell = (label, value, span = 1) => {
+    const v = (value ?? '').toString().trim()
+    const inner = v ? `<div class="val">${v}</div>` : ''
+    return `<td${span > 1 ? ` colspan="${span}"` : ''}><div class="lbl">${label}</div>${inner}</td>`
+  }
+  const singleVal = (value, span = 1, cls = '') => {
+    const v = value ?? ''
+    return `<td${span > 1 ? ` colspan="${span}"` : ''}${cls ? ` class="${cls}"` : ''}>${v}</td>`
+  }
+
+  // ===== 商品表 =====
+  // 商品表：海关标准格式，申报要素为商品名称列下方的独立子行（跨 c1+c2+c3 三列）
+  const MIN_ITEM_ROWS = 6
+  const itemMainRow = (it, i) => {
     const cur = it.currency || decl.currency || 'USD'
     const oc = it.origin_country || decl.origin_country || '中国'
     const dc = it.dest_country || decl.dest_country_name || decl.country || ''
     const os = it.origin_source || decl.origin_source || ''
     const lv = it.levy || decl.levy || '征税'
-    const priceFmt = Number(it.price || 0).toFixed(2)
-    const totalFmt = Number(it.total || 0).toFixed(2)
-    // 主数据行（12 列）—— td 不加额外类，边框由 .decl-doc td 基础规则统一提供
-    const mainRow = `
-      <tr>
-        <td class="ctr">${i + 1}</td>
-        <td class="ctr">${it.hs_code || ''}</td>
-        <td class="topleft">${it.name || ''}</td>
-        <td class="ctr">${it.qty || 0}</td>
-        <td class="ctr">${it.unit || ''}</td>
-        <td class="num">${priceFmt}</td>
-        <td class="num">${totalFmt}</td>
-        <td class="ctr">${cur}</td>
-        <td class="ctr">${oc}</td>
-        <td class="ctr">${dc}</td>
-        <td class="ctr">${os}</td>
-        <td class="ctr">${lv}</td>
-      </tr>`
-    // 申报要素子行（跨整行，描述该商品的申报要素说明）
-    const elements = (it.elements || '').trim()
-    const elRow = elements ? `
-      <tr>
-        <td colspan="12" class="el-row">
-          <strong>申报要素：</strong>${elements.replace(/\n/g, '；')}
-        </td>
-      </tr>` : ''
-    return mainRow + elRow
-  }).join('')
+    const hasElements = it.elements && it.elements.trim()
+    const itemCell = hasElements
+      ? `<td class="ctr" rowspan="2">${i + 1}</td>`
+      : `<td class="ctr">${i + 1}</td>`
+    return `<tr>
+      ${itemCell}
+      <td>${it.hs_code || ''}</td>
+      <td colspan="2">${it.name || ''}</td>
+      <td>${it.qty || 0}</td>
+      <td>${it.unit || ''}</td>
+      <td class="num">${Number(it.price || 0).toFixed(2)}</td>
+      <td class="num">${Number(it.total || 0).toFixed(2)}</td>
+      <td class="ctr">${cur}</td>
+      <td class="ctr">${oc}</td>
+      <td class="ctr">${dc}</td>
+      <td class="ctr">${os}</td>
+      <td class="ctr">${lv}</td>
+    </tr>`
+  }
+  const itemSubRow = (elements) => {
+    const text = (elements || '').trim()
+    if (!text) return ''
+    // c0(项号) 已由主行 rowspan=2 合并；子行从 c1(商品编号) 铺到 c12(征免)，整行无分割线
+    return `<tr><td colspan="12" class="decl-el-elem">${text}</td></tr>`
+  }
+  const itemRowsHtml = (() => {
+    const count = Math.max(items.length, MIN_ITEM_ROWS)
+    let html = ''
+    for (let i = 0; i < count; i++) {
+      const it = items[i]
+      if (it) {
+        html += itemMainRow(it, i)
+        html += itemSubRow(it.elements || '')
+      } else {
+        html += `<tr><td class="ctr">${i + 1}</td><td></td><td colspan="2"></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`
+      }
+    }
+    return html
+  })()
 
   return `
     <style>
-      .decl-doc { font-family: SimSun, '宋体', 'SimHei', '黑体', serif; color:#000; font-size:9pt; }
-      .decl-doc table { border-collapse: collapse; width:100%; table-layout: fixed; }
-      /* 基础单元格：所有 td 默认全边框 + 自动换行，杜绝文字溢出/缺线 */
-      .decl-doc td { border:1px solid #000; padding:3px 4px; vertical-align:middle; font-size:9pt; line-height:1.25; word-break:break-word; overflow-wrap:break-word; }
-      /* 标签格：灰底加粗居中，允许窄列内换行（不 nowrap，防止溢出） */
-      .decl-doc .lbl { background:#f0f0f0; font-weight:bold; text-align:center; white-space:normal; word-break:break-all; line-height:1.15; }
+      @page { size: A4 landscape; margin: 12mm; }
+      .decl-doc { font-family: 'SimSun','宋体',serif; color:#000; font-size:9pt; line-height:1.2; }
+      .decl-doc table { border-collapse:collapse; width:100%; table-layout:fixed; }
+      .decl-doc td { border:1px solid #000; padding:2px 3px; vertical-align:middle; font-size:9pt; word-break:break-all; overflow-wrap:break-word; }
+      .decl-doc .lbl { font-weight:bold; font-size:8.5pt; color:#333; margin-bottom:2px; }
+      .decl-doc .val { font-size:9pt; }
       .decl-doc .ctr { text-align:center; }
-      .decl-doc .topleft { text-align:left; }
-      .decl-doc .num { text-align:right; padding-right:6px; white-space:nowrap; }
-      .decl-doc .el-row { font-size:8.5pt; color:#333; text-align:left; }
-      .decl-doc .decl-title-row td { text-align:center; font-size:15pt; font-weight:bold; padding:10px 0; letter-spacing:4px; }
-      .decl-doc .head-row td { background:#f0f0f0; font-weight:bold; text-align:center; white-space:normal; word-break:break-all; line-height:1.15; }
-      .decl-doc .page-footer { text-align:right; font-size:9pt; padding:4px 6px; color:#555; border:none; }
+      .decl-doc .num { text-align:right; padding-right:4px; white-space:nowrap; }
+      .decl-doc .decl-el-elem { font-size:8pt; color:#333; padding:1px 4px; white-space:pre-wrap; }
+      .decl-doc .hdr-row td { background:#f0f0f0; font-weight:bold; text-align:center; font-size:8.5pt; line-height:1.15; }
+      .decl-doc .top-area { text-align:center; margin-bottom:6px; }
+      .decl-doc .form-title { font-size:16pt; font-weight:bold; letter-spacing:6px; }
+      .decl-doc .broker-line { font-size:10pt; margin-top:4px; }
+      .decl-doc .entry-line { font-size:9pt; margin-top:2px; }
+      .decl-doc .entry-line .lbl2 { color:#555; }
+      .decl-doc .entry-line .val2 { margin-right:30px; }
     </style>
     <div class="decl-doc">
+      <!-- ====== 表格上方区：标题 + 报关行 + 预录入/海关编号 ====== -->
+      <div class="top-area">
+        <div class="form-title">中华人民共和国海关出口货物报关单</div>
+        <div class="broker-line">报关行：${decl.broker || ''}</div>
+        <div class="entry-line">
+          <span class="lbl2">预录入编号：</span><span class="val2">${decl.pre_entry_no || ''}</span>
+          <span class="lbl2">海关编号：</span><span>${decl.customs_no || ''}</span>
+        </div>
+      </div>
+
+      <!-- ====== 13 列主表 ====== -->
       <table>
-        <!-- 固定 12 列网格宽度：标签常出现的列保证 ≥7%（约70px），品名弹性列 20% -->
         <colgroup>
-          <col style="width:7%"><col style="width:9%"><col style="width:20%"><col style="width:7%"><col style="width:7%"><col style="width:7%"><col style="width:7.5%"><col style="width:6.5%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:6.5%">
+          <col style="width:8.35%"><col style="width:9.94%"><col style="width:13.56%"><col style="width:7.58%"><col style="width:7.48%"><col style="width:7.87%"><col style="width:7.09%"><col style="width:7.37%"><col style="width:5.61%"><col style="width:5.12%"><col style="width:6.79%"><col style="width:6.60%"><col style="width:6.65%">
         </colgroup>
 
-        <!-- ============ 标题行 ============ -->
-        <tr class="decl-title-row">
-          <td colspan="12">中华人民共和国海关出口货物报关单</td>
+        <!-- Row0 c0×3 c3×2 c5×2 c7×3 c10×3 -->
+        <tr>
+          ${labeledCell('境内发货人', decl.shipper, 3)}
+          ${labeledCell('出境关别', decl.exit_customs, 2)}
+          ${labeledCell('出口日期', decl.export_date, 2)}
+          ${labeledCell('申报日期', decl.declare_date, 3)}
+          ${labeledCell('备案号', decl.record_no, 3)}
         </tr>
 
-        <!-- ============ 头部：报关行 + 预录入号 + 海关编号 ============ -->
+        <!-- Row1 c0×3 c3×2 c5×2 c7×6 -->
         <tr>
-          <td class="lbl">报关行</td>
-          <td colspan="4">${decl.broker || ''}</td>
-          <td class="lbl">预录入编号</td>
-          <td>${decl.pre_entry_no || ''}</td>
-          <td class="lbl">海关编号</td>
-          <td colspan="4">${decl.customs_no || ''}</td>
+          ${labeledCell('境外收货人', decl.consignee, 3)}
+          ${labeledCell('运输方式', decl.transport_mode || '海运', 2)}
+          ${labeledCell('运输工具名称及航次号', decl.vessel_voyage, 2)}
+          ${labeledCell('提运单号', decl.bill_no, 6)}
         </tr>
 
-        <!-- ============ 第一行：境内发货人 / 出境关别 / 出口日期 / 申报日期 / 备案号 ============ -->
+        <!-- Row2 same as Row1 -->
         <tr>
-          <td class="lbl">境内发货人</td>
-          <td colspan="3">${decl.shipper || ''}</td>
-          <td class="lbl">出境关别</td>
-          <td>${decl.exit_customs || ''}</td>
-          <td class="lbl">出口日期</td>
-          <td>${decl.export_date || ''}</td>
-          <td class="lbl">申报日期</td>
-          <td>${decl.declare_date || ''}</td>
-          <td class="lbl">备案号</td>
-          <td>${decl.record_no || ''}</td>
+          ${labeledCell('生产销售单位', decl.manufacturer, 3)}
+          ${labeledCell('监管方式', decl.supervision_mode || '一般贸易', 2)}
+          ${labeledCell('征免性质', decl.levy_nature || '一般征税', 2)}
+          ${labeledCell('许可证号', decl.license_no, 6)}
         </tr>
 
-        <!-- ============ 第二行：境外收货人 / 运输方式 / 运输工具名称及航次号 / 提运单号 ============ -->
+        <!-- Row3 c0×3 c3×2 c5×5 c10×3 -->
         <tr>
-          <td class="lbl">境外收货人</td>
-          <td colspan="3">${decl.consignee || ''}</td>
-          <td class="lbl">运输方式</td>
-          <td>${decl.transport_mode || ''}</td>
-          <td class="lbl">运输工具名称及航次号</td>
-          <td colspan="2">${decl.vessel_voyage || ''}</td>
-          <td class="lbl">提运单号</td>
-          <td colspan="2">${decl.bill_no || ''}</td>
+          ${labeledCell('合同协议号', decl.contract_no, 3)}
+          ${labeledCell('贸易国（地区）', decl.trade_country, 2)}
+          ${labeledCell('运抵国（地区）', decl.dest_country_name || decl.dest_country, 2)}
+          ${labeledCell('指运港', decl.dest_port, 3)}
+          ${labeledCell('离境口岸', decl.exit_port, 3)}
         </tr>
 
-        <!-- ============ 第三行：生产销售单位 / 监管方式 / 征免性质 / 许可证号 ============ -->
+        <!-- Row4 c0×3 c3×1 c4×1 c5×1 c6×1 c7×2 c9×2 c11×2 -->
         <tr>
-          <td class="lbl">生产销售单位</td>
-          <td colspan="3">${decl.manufacturer || ''}</td>
-          <td class="lbl">监管方式</td>
-          <td>${decl.supervision_mode || '一般贸易'}</td>
-          <td class="lbl">征免性质</td>
-          <td>${decl.levy_nature || '一般征税'}</td>
-          <td class="lbl">许可证号</td>
-          <td colspan="3">${decl.license_no || ''}</td>
+          ${labeledCell('包装种类', decl.pack_type, 3)}
+          ${labeledCell('件数', decl.total_packages, 1)}
+          ${labeledCell('毛重（千克）', decl.gross_weight, 1)}
+          ${labeledCell('净重（千克）', decl.net_weight, 1)}
+          ${labeledCell('成交方式', decl.trade_mode || 'FOB', 1)}
+          ${labeledCell('运费', decl.freight, 2)}
+          ${labeledCell('保费', decl.insurance, 2)}
+          ${labeledCell('杂费', decl.misc_fees, 2)}
         </tr>
 
-        <!-- ============ 第四行：合同协议号 / 贸易国(地区) / 运抵国(地区) / 指运港 / 离境口岸 ============ -->
+        <!-- Row5 c0×13 随附单证 -->
         <tr>
-          <td class="lbl">合同协议号</td>
-          <td colspan="2">${decl.contract_no || ''}</td>
-          <td class="lbl">贸易国(地区)</td>
-          <td>${decl.trade_country || ''}</td>
-          <td class="lbl">运抵国(地区)</td>
-          <td>${decl.dest_country || ''}</td>
-          <td class="lbl">指运港</td>
-          <td>${decl.dest_port || ''}</td>
-          <td class="lbl">离境口岸</td>
-          <td colspan="2">${decl.exit_port || ''}</td>
+          <td colspan="13">
+            <div class="lbl">随附单证</div>
+            随附单证 1：${decl.attached_docs_1 || ''}　
+            随附单证 2：${decl.attached_docs_2 || ''}
+          </td>
         </tr>
 
-        <!-- ============ 第五行：包装种类 / 件数 / 毛重(千克) / 净重(千克) / 成交方式 / 运费 / 保费 / 杂费 ============ -->
+        <!-- Row6 c0×13 标记唛码及备注 -->
         <tr>
-          <td class="lbl">包装种类</td>
-          <td>${decl.pack_type || ''}</td>
-          <td class="lbl">件数</td>
-          <td class="ctr">${decl.total_packages ?? ''}</td>
-          <td class="lbl">毛重(千克)</td>
-          <td class="num">${decl.gross_weight ?? ''}</td>
-          <td class="lbl">净重(千克)</td>
-          <td class="num">${decl.net_weight ?? ''}</td>
-          <td class="lbl">成交方式</td>
-          <td class="ctr">${decl.trade_mode || ''}</td>
-          <td class="lbl">运费</td>
-          <td>${decl.freight || ''}</td>
-        </tr>
-        <tr>
-          <td class="lbl">保费</td>
-          <td>${decl.insurance || ''}</td>
-          <td class="lbl">杂费</td>
-          <td colspan="9">${decl.misc_fees || ''}</td>
+          <td colspan="13" style="padding:4px 6px;">
+            <div class="lbl">标记唛码及备注</div>
+            <div style="white-space:pre-wrap;">${decl.shipping_marks_notes || ''}</div>
+          </td>
         </tr>
 
-        <!-- ============ 第六行：随附单证 1 / 随附单证 2 ============ -->
-        <tr>
-          <td class="lbl">随附单证</td>
-          <td colspan="5">随附单证 1：${decl.attached_docs_1 || ''}</td>
-          <td colspan="6">随附单证 2：${decl.attached_docs_2 || ''}</td>
-        </tr>
-
-        <!-- ============ 第七行：标记唛码及备注 ============ -->
-        <tr>
-          <td class="lbl" style="height:64px;">标记唛码及备注</td>
-          <td colspan="11" style="white-space:pre-wrap;">${decl.shipping_marks_notes || ''}</td>
-        </tr>
-
-        <!-- ============ 商品表：12 列表头（宽度由 colgroup 统一控制） ============ -->
-        <tr class="head-row">
+        <!-- Row7 表头 c0×1 c1×1 c2×2 c4×2 c6~c12 各 1 -->
+        <tr class="hdr-row">
           <td>项号</td>
           <td>商品编号</td>
-          <td>商品名称及规格型号</td>
-          <td>数量</td>
-          <td>单位</td>
+          <td colspan="2">商品名称及规格型号</td>
+          <td colspan="2">数量及单位</td>
           <td>单价</td>
           <td>总价</td>
           <td>币制</td>
-          <td>原产国(地区)</td>
-          <td>最终目的国(地区)</td>
+          <td>原产国（地区）</td>
+          <td>最终目的国</td>
           <td>境内货源地</td>
           <td>征免</td>
         </tr>
+
+        <!-- Row8~19 商品 6 组 主+子 -->
         ${itemRowsHtml}
-        ${items.length === 0 ? `<tr><td colspan="12" class="ctr" style="color:#999;">（暂无商品数据）</td></tr>` : ''}
 
-        <!-- ============ 特殊关系等确认（长标签跨 2 列，防止溢出） ============ -->
+        <!-- Row20 c0×13 特殊关系等 -->
         <tr>
-          <td class="lbl" colspan="2">特殊关系确认</td>
-          <td class="ctr">${decl.special_relation || '否'}</td>
-          <td class="lbl" colspan="2">价格影响确认</td>
-          <td class="ctr">${decl.price_affect || '否'}</td>
-          <td class="lbl" colspan="2">支付特许权使用费确认</td>
-          <td class="ctr">${decl.royalty || '否'}</td>
-          <td class="lbl">自报自缴</td>
-          <td class="ctr" colspan="2">${decl.self_declare || '是'}</td>
-        </tr>
-
-        <!-- ============ 底部：申报人员 / 证号 / 电话 / 声明+签章 / 海关批注 ============ -->
-        <tr>
-          <td class="lbl" style="height:72px;">申报人员</td>
-          <td>${decl.declarer || ''}</td>
-          <td class="lbl">申报人员证号</td>
-          <td>${decl.declarer_no || ''}</td>
-          <td class="lbl">电话</td>
-          <td>${decl.declarer_tel || ''}</td>
-          <td colspan="5" style="font-size:9pt;line-height:1.6;text-align:left;">
-            兹申明以上内容承担如实申报、依法纳税之法律责任<br/><br/>
-            申报单位(签章)：${decl.declare_unit || company.name_cn || ''}
+          <td colspan="13" style="text-align:center; padding:3px 6px;">
+            特殊关系确认：${decl.special_relation || '否'}　
+            价格影响确认：${decl.price_affect || '否'}　
+            支付特许权使用费确认：${decl.royalty || '否'}　
+            自报自缴：${decl.self_declare || '是'}
           </td>
-          <td class="lbl">海关批注及签章</td>
         </tr>
 
-        <!-- ============ 页码 ============ -->
-        <tr><td colspan="12" class="page-footer">-- 1 of 1 --</td></tr>
+        <!-- Row21 c0×10 c10×3 申报人员/声明/海关批注 -->
+        <tr>
+          <td colspan="10" style="padding:3px 6px; vertical-align:top;">
+            申报人员：${decl.declarer || ''}　
+            申报人员证号：${decl.declarer_no || ''}　
+            电话：${decl.declarer_tel || ''}<br/>
+            兹申明以上内容承担如实申报、依法纳税之法律责任
+          </td>
+          <td colspan="3" style="vertical-align:top; text-align:center;">海关批注及签章</td>
+        </tr>
+
+        <!-- Row22 c0×10 c10×3 申报单位 (tall row 54pt) -->
+        <tr style="height:54px;">
+          <td colspan="10" style="vertical-align:bottom; padding-bottom:4px;">
+            申报单位：${decl.declare_unit || company.name_cn || ''}　
+            申报单位(签章)：_______________
+          </td>
+          <td colspan="3" style="vertical-align:bottom; padding-bottom:4px;"></td>
+        </tr>
       </table>
     </div>`
 }
@@ -961,6 +1041,9 @@ onMounted(() => { loadList(); loadOptions() })
 .decl-form .decl-checks { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
 .items-section { margin-top: 12px; border-top: 1px solid #e2e8f0; padding-top: 12px; }
 .items-section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.order-summary-bar { margin-top: 12px; padding: 8px 12px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; font-size: 13px; color: #0f172a; display: flex; gap: 24px; justify-content: flex-end; align-items: center; }
+.order-summary-bar b { color: #0369a1; font-size: 14px; }
+.summary-title { color: #475569; font-weight: 600; }
 .row-total { font-weight: 700; color: #dc2626; }
 
 @media print {

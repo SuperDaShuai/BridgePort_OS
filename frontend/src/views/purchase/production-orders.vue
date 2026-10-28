@@ -624,13 +624,25 @@ async function loadList() {
       const rowKey = `${row.ref_type}-${row.id || row.ref_number}`
       const subs = Array.isArray(po.sub_orders) ? po.sub_orders : []
       if (subs.length > 0) {
+        // 隐藏未指定供应商的子任务单（supplier_id 为空/null）
+        const activeSubs = subs.filter(so => so.supplier_id)
         // 从明细计算各子任务单的排产数量和品类数
         const allItems = itemsMap.get(rowKey) || []
+        if (activeSubs.length === 0) {
+          // 全未指定：退化为单行显示
+          return {
+            ...row,
+            rowKey,
+            supplier_id: row.supplier_id || po.supplier_id || null,
+            supplier_name: row.supplier_name || po.supplier_name || '',
+            product_kind_count: row.item_count || 0
+          }
+        }
         return {
           ...row,
           rowKey,
           is_parent: true,
-          children: subs.map((so, i) => {
+          children: activeSubs.map((so, i) => {
             const pids = Array.isArray(so.product_ids) ? so.product_ids : []
             const pidSet = new Set(pids.map(id => Number(id)))
             const subItems = allItems.filter(it => pidSet.has(Number(it.product_id)))
@@ -643,7 +655,7 @@ async function loadList() {
               sub_order: so,
               supplier_id: so.supplier_id,
               supplier_name: so.supplier_name,
-              sub_index: i,
+              sub_index: subs.indexOf(so), // 保留原始索引（与 JSON 中位置对应）
               total_qty: subQty,
               product_kind_count: subKinds
             }
@@ -744,6 +756,12 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
   const today = new Date()
   const orderDate = today.toISOString().slice(0, 10)
   const exts = po.item_extensions || []
+  // 扩展映射：按 product_id 做 key（子任务单模式下 exts 是全量数组，items 是过滤后的，位置可能错位）
+  const extMap = new Map()
+  for (const e of exts) {
+    const pid = Number(e.product_id)
+    if (!Number.isNaN(pid)) extMap.set(pid, e)
+  }
   // 行源：子任务单模式强制走非 snapshot 分支
   const hasSnapshot = !subOrder && exts.length > 0 && exts[0].model !== undefined
   const rows = hasSnapshot
@@ -759,9 +777,9 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
           remark: e.remark || ''
         }
       })
-    : items.map((it, idx) => {
+    : items.map((it) => {
         const prod = resolveProd(it, productMap)
-        const ext = exts[idx] || {}
+        const ext = extMap.get(Number(it.product_id)) || {}
         return {
           model: (prod && prod.our_model) || it.model || '',
           supplier_model: prod ? (prod.our_model || '') : (it.supplier_model || ''),

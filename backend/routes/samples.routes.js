@@ -673,6 +673,12 @@ router.get(
 
     // ===== 明细行准备 =====
     const hasSnapshot = !subOrder && exts.length > 0 && exts[0] && exts[0].model !== undefined;
+    // 扩展映射：按 product_id 做 key（子任务单模式下 exts 是全量数组，filteredItems 是过滤后的，位置可能错位）
+    const extMap = new Map();
+    for (const e of exts) {
+      const pid = Number(e.product_id);
+      if (!Number.isNaN(pid)) extMap.set(pid, e);
+    }
     const detailRows = hasSnapshot
       ? exts.map((e) => ({
           model: e.supplier_model || e.model || '',
@@ -682,8 +688,8 @@ router.get(
           detail_spec: e.detail_spec || '',
           remark: e.remark || ''
         }))
-      : filteredItems.map((it, i) => {
-          const ext = exts[i] || {};
+      : filteredItems.map((it) => {
+          const ext = extMap.get(Number(it.product_id)) || {};
           return {
             model: (it.supplier_model || it.model) || '',
             qty: Number(it.qty) || 0,

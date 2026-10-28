@@ -198,11 +198,15 @@ router.get(
     const [items] = await pool.query(
       `SELECT oi.*, p.spec_cn, p.our_model AS product_our_model, p.purchase_cost_rmb AS product_purchase_cost,
               p.supplier_id AS product_supplier_id, p.product_type AS product_type, s.name AS product_supplier_name,
-              p.hs_code AS product_hs_code
+              p.hs_code AS product_hs_code,
+              MIN(h.product_name) AS hs_product_name,
+              MIN(h.declaration_elements) AS hs_elements
        FROM order_items oi
        LEFT JOIN products p ON oi.product_id = p.id
        LEFT JOIN suppliers s ON p.supplier_id = s.id
+       LEFT JOIN hs_codes h ON p.hs_code = h.hs_code
        WHERE oi.order_id = ?
+       GROUP BY oi.id
        ORDER BY oi.id ASC`,
       [order.id]
     );
@@ -385,6 +389,12 @@ router.get(
 
     // ===== 明细行准备 =====
     const hasSnapshot = !subOrder && exts.length > 0 && exts[0] && exts[0].model !== undefined;
+    // 扩展映射：按 product_id 做 key（子任务单模式下 exts 是全量数组，filteredItems 是过滤后的，位置可能错位）
+    const extMap = new Map();
+    for (const e of exts) {
+      const pid = Number(e.product_id);
+      if (!Number.isNaN(pid)) extMap.set(pid, e);
+    }
     const detailRows = hasSnapshot
       ? exts.map((e) => ({
           model: e.supplier_model || e.model || '',
@@ -394,8 +404,8 @@ router.get(
           detail_spec: e.detail_spec || '',
           remark: e.remark || ''
         }))
-      : filteredItems.map((it, i) => {
-          const ext = exts[i] || {};
+      : filteredItems.map((it) => {
+          const ext = extMap.get(Number(it.product_id)) || {};
           return {
             model: (it.supplier_model || it.model) || '',
             qty: Number(it.qty) || 0,
