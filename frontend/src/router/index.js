@@ -139,12 +139,24 @@ const routes = [
         meta: { title: 'HS编码库', permission: [1, 2, 3] }
       },
       {
+        path: 'master/accessories',
+        name: 'MasterAccessories',
+        component: () => import('@/views/master/accessories.vue'),
+        meta: { title: '配件管理', permission: [1, 2] }
+      },
+      {
         path: 'master/suppliers',
         name: 'MasterSuppliers',
         component: () => import('@/views/master/suppliers.vue'),
         meta: { title: '供应商管理', permission: [1, 2, 4] }
       },
       // ── 系统管理 ──
+      {
+        path: 'profile',
+        name: 'Profile',
+        component: () => import('@/views/system/profile.vue'),
+        meta: { title: '个人中心' }
+      },
       {
         path: 'system/company-settings',
         name: 'SystemCompanySettings',

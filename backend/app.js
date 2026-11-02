@@ -38,6 +38,7 @@ app.use('/api/product-configs', require('./routes/product-configs.routes'));
 // 产品多图路由（mergeParams 让 :productId 能在子路由中访问）
 app.use('/api/products/:productId/photos', require('./routes/product-photos.routes'));
 app.use('/api/hs-codes', require('./routes/hs-codes.routes'));
+app.use('/api/accessories', require('./routes/accessories.routes'));
 app.use('/api/payment-terms', require('./routes/payment-terms.routes'));
 app.use('/api/bank-accounts', require('./routes/bank-accounts.routes'));
 app.use('/api/operators', require('./routes/operators.routes'));

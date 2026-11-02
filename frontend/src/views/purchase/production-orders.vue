@@ -4,7 +4,6 @@
     <div class="page-header" style="display: flex; align-items: center; gap: 16px;">
       <h2 class="page-title">采购管理 - 采购订货单 (POD)</h2>
       <el-radio-group v-model="filterType" size="small">
-        <el-radio-button value="all">全部</el-radio-button>
         <el-radio-button value="order">外销订单</el-radio-button>
         <el-radio-button value="sample">样品单</el-radio-button>
       </el-radio-group>
@@ -236,6 +235,69 @@
           </el-col>
         </el-row>
 
+        <!-- 配件关联选择：插头分类单选 -->
+        <el-divider content-position="left">插头配件关联</el-divider>
+        <el-row :gutter="16">
+          <el-col :span="24">
+            <el-form-item label="选择插头型号">
+              <el-select
+                v-model="editForm.plug_accessory_id"
+                filterable
+                clearable
+                placeholder="从插头分类中选一个型号"
+                style="width: 100%"
+              >
+                <el-option
+                  v-for="a in filteredAccessories"
+                  :key="a.id"
+                  :label="`${a.name}${a.specs ? ' / ' + a.specs : ''}`"
+                  :value="a.id"
+                >
+                  <div style="display:flex; align-items:center; gap:10px; width:100%;">
+                    <img
+                      v-if="a.image_url"
+                      :src="a.image_url"
+                      style="width:36px; height:36px; object-fit:contain; border:1px solid #ebeef5; border-radius:4px; background:#fff;"
+                      alt=""
+                    />
+                    <div
+                      v-else
+                      style="width:36px; height:36px; border:1px dashed #dcdfe6; border-radius:4px; background:#fafafa; display:flex; align-items:center; justify-content:center; color:#c0c4cc; font-size:11px;"
+                    >无图</div>
+                    <div style="flex:1; min-width:0;">
+                      <div style="font-size:14px; color:#303133; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ a.name }}</div>
+                      <div v-if="a.specs" style="font-size:12px; color:#909399; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ a.specs }}</div>
+                    </div>
+                  </div>
+                </el-option>
+              </el-select>
+              <!-- 已选插头大图预览（改选项时同步更新） -->
+              <div
+                v-if="editForm.plug_accessory_id && selectedPlugAccessory?.image_url"
+                style="margin-top:10px;"
+              >
+                <div style="font-size:12px; color:#909399; margin-bottom:6px;">已选插头预览</div>
+                <img
+                  :src="selectedPlugAccessory.image_url"
+                  :alt="selectedPlugAccessory.name"
+                  style="max-width:160px; max-height:120px; object-fit:contain; border:1px solid #ebeef5; border-radius:6px; background:#fff; cursor:zoom-in;"
+                  @click="previewPlugImg(selectedPlugAccessory.image_url)"
+                />
+              </div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <!-- 包装说明（模块二之后、其他要求之前） -->
+        <el-divider content-position="left">包装说明</el-divider>
+        <el-row :gutter="16">
+          <el-col :span="24">
+            <el-form-item label="包装说明">
+              <el-input v-model="editForm.packaging_note" type="textarea" :rows="5" placeholder="无" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+
         <!-- 分区 3：其他要求 -->
         <!-- 分区 3：其他要求（合并原模块3+4，只保留图片上传 + 多行备注） -->
         <el-divider content-position="left">三、其他要求（图片 + 备注）</el-divider>
@@ -283,6 +345,7 @@ import { listOrders, getOrder, updateOrder } from '@/api/orders'
 import { listSamples, getSample, updateSample } from '@/api/samples'
 import { listSuppliers } from '@/api/suppliers'
 import { listProducts, listProductConfigs } from '@/api/products'
+import { listCategories as listAccessoryCategories, listAccessories } from '@/api/accessories'
 import { getCompanySettings } from '@/api/companySettings'
 import { formatMoney, getOrderTotals, printDocument } from '@/utils/docUtils'
 import { useUserStore } from '@/stores/user'
@@ -374,21 +437,121 @@ function readSubFields(src, fb = {}) {
     product_config_data: configData,
     product_config_text: configText,
     plug_photos: Array.isArray(s.plug_photos) ? [...s.plug_photos] : (Array.isArray(f.plug_photos) ? [...f.plug_photos] : []),
-    remark_note: s.remark_note ?? f.remark_note ?? ''
+    remark_note: s.remark_note ?? f.remark_note ?? '',
+    packaging_note: s.packaging_note ?? f.packaging_note ?? '',
+    // accessories_ids[] 存 JSON 数组，前端 UI 用单选，取第一个
+    plug_accessory_id: (Array.isArray(s.accessories_ids) && s.accessories_ids.length) ? s.accessories_ids[0]
+      : (Array.isArray(f.accessories_ids) && f.accessories_ids.length ? f.accessories_ids[0] : null)
   }
 }
 
 const loading = ref(false)
 const saving = ref(false)
 const list = ref([])
-// 来源筛选：all=全部 / order=仅外销订单 / sample=仅样品单
-const filterType = ref('all')
-const filteredList = computed(() => {
-  if (filterType.value === 'all') return list.value
-  return list.value.filter((row) => row.ref_type === filterType.value)
-})
+// 来源筛选：order=仅外销订单 / sample=仅样品单
+const filterType = ref('order')
+const filteredList = computed(() => list.value.filter((row) => row.ref_type === filterType.value))
 const supplierOptions = ref([])
 const companySettings = ref({})
+
+// ===== 配件选择 =====
+const accessoryCategoryList = ref([])  // 所有配件分类（其他地方可能用到）
+const accessoryList = ref([])          // 所有配件
+const pendingAccessoryId = ref(null)   // 下拉框中暂存的配件 id
+// 生产任务单只需要插头分类下的配件
+const PLUG_CATEGORY_NAME = '插头'
+const filteredAccessories = computed(() => {
+  return accessoryList.value.filter(a => {
+    const cat = accessoryCategoryList.value.find(c => c.id === a.category_id)
+    return cat && cat.name === PLUG_CATEGORY_NAME
+  })
+})
+// 已选插头的完整配件对象（用于下方大图预览）
+const selectedPlugAccessory = computed(() => {
+  const id = editForm.value.plug_accessory_id
+  if (!id) return null
+  return accessoryList.value.find(a => a.id === id) || null
+})
+// 点开大图预览（新标签打开 base64）
+function previewPlugImg(url) {
+  if (!url) return
+  const w = window.open('', '_blank')
+  if (w) {
+    w.document.write(`<img src="${url}" style="max-width:100%; max-height:100vh; object-fit:contain;">`)
+    w.document.close()
+  }
+}
+
+// 加载配件分类 + 配件列表
+async function loadAccessories() {
+  try {
+    const cats = await listAccessoryCategories()
+    accessoryCategoryList.value = cats || []
+    const accs = await listAccessories({ pageSize: 500 })
+    accessoryList.value = accs.list || accs || []
+  } catch {
+    accessoryCategoryList.value = []
+    accessoryList.value = []
+  }
+}
+
+// 配件分类 id → name 映射
+const accCategoryNameMap = computed(() => {
+  const m = new Map()
+  for (const c of accessoryCategoryList.value) m.set(c.id, c.name)
+  return m
+})
+const accNameMap = computed(() => {
+  const m = new Map()
+  for (const a of accessoryList.value) m.set(a.id, a)
+  return m
+})
+
+// 添加配件（防止重复）
+function appendSelectedAccessory(accId) {
+  if (!accId) return
+  const ids = editForm.value.accessories_ids || []
+  if (ids.includes(accId)) {
+    ElMessage.warning('该配件已添加')
+    return
+  }
+  ids.push(accId)
+  editForm.value.accessories_ids = ids
+  // 同步追加成纯文本到 product_config_text（模块二内容末尾）
+  const acc = accNameMap.value.get(accId)
+  if (acc) {
+    const catName = accCategoryNameMap.value.get(acc.category_id) || '配件'
+    const line = `【配件·${catName}】${acc.name}${acc.specs ? ' / ' + acc.specs : ''}`
+    const cur = editForm.value.product_config_text || ''
+    editForm.value.product_config_text = cur ? cur + '\n' + line : line
+  }
+}
+
+// 从已添加列表移除配件
+function removeAccessory(accId) {
+  const ids = (editForm.value.accessories_ids || []).filter(id => id !== accId)
+  editForm.value.accessories_ids = ids
+  // 同步从 product_config_text 中删除对应行
+  const acc = accNameMap.value.get(accId)
+  if (acc) {
+    const catName = accCategoryNameMap.value.get(acc.category_id) || '配件'
+    const line = `【配件·${catName}】${acc.name}${acc.specs ? ' / ' + acc.specs : ''}`
+    let cur = editForm.value.product_config_text || ''
+    const escaped = line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    cur = cur.replace(new RegExp('^' + escaped + '\\s*\\n?', 'gm'), '')
+    editForm.value.product_config_text = cur.trim()
+  }
+}
+
+// UI 按钮：添加后清空 pendingAccessoryId
+function appendPendingAccessory() {
+  if (!pendingAccessoryId.value) {
+    ElMessage.warning('请先选择一个配件')
+    return
+  }
+  appendSelectedAccessory(pendingAccessoryId.value)
+  pendingAccessoryId.value = null
+}
 
 // 预览
 const previewVisible = ref(false)
@@ -469,6 +632,21 @@ watch(() => editForm.value.product_config_types, (newTypes, oldTypes) => {
   }
   editForm.value.product_config_text = text
 }, { deep: true })
+
+// ===== 插头选择 watcher：自动在 product_config_text 里维护一个【插头型号】区块 =====
+watch(() => editForm.value.plug_accessory_id, (newId, oldId) => {
+  const cur = editForm.value.product_config_text || ''
+  // 先删掉旧的【插头型号】区块（从【插头型号】到下一个【开头或文末）
+  let text = cur.replace(/【插头型号】[\s\S]*?(?=\n\n【|$)/, '').trim()
+  if (newId) {
+    const acc = accNameMap.value.get(newId)
+    if (acc) {
+      const block = `【插头型号】\n${acc.name}${acc.specs ? ' / ' + acc.specs : ''}`
+      text = text ? text + '\n\n' + block : block
+    }
+  }
+  editForm.value.product_config_text = text
+})
 
 // 生成带【类型】标题的配置模板（每个类型一个区块，区块间空行分隔，多类型时分隔清晰）
 function buildConfigTemplateText(selectedTypes) {
@@ -820,6 +998,7 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
   const sf = readSubFields(subOrder, po)
   const photos = Array.isArray(sf.plug_photos) ? sf.plug_photos : []
   const remarkText = sf.remark_note || ''
+  const packagingText = sf.packaging_note || ''
 
   // ===== 统一采购备注：模块2 电气配置文本（直接显示多行文本内容）=====
   const configData = (sf.product_config_data && typeof sf.product_config_data === 'object') ? sf.product_config_data : null
@@ -879,6 +1058,18 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
     generalRemarksText = '<div style="color:#64748b; font-style:italic;">无</div>'
   }
 
+  // ===== 模块二里找插头图片（右侧展示：图 + 红底白字名称标签，严格对照用户模板）=====
+  let plugImgHtml = ''
+  let plugLabelHtml = ''
+  const plugAccId = sf.plug_accessory_id
+  if (plugAccId && accessoryList.value.length) {
+    const acc = accessoryList.value.find(a => a.id === plugAccId)
+    if (acc && acc.image_url && typeof acc.image_url === 'string' && acc.image_url.startsWith('data:image')) {
+      plugImgHtml = `<img src="${acc.image_url}" style="width:140px; height:140px; object-fit:contain; border:1px solid #e2e8f0; border-radius:4px;" />`
+      plugLabelHtml = `<div style="background:#e60012; color:#fff; font-weight:700; font-size:11px; text-align:center; padding:2px 6px; margin-top:4px; width:140px; box-sizing:border-box;">${acc.name || '插头'}</div>`
+    }
+  }
+
   return `
     <div style="text-align:center; font-size:22pt; font-weight:900; letter-spacing:16px; padding:16px 0; color:#1a1a1a;">采 购 订 货 单</div>
 
@@ -893,7 +1084,7 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
       <table style="border-collapse:collapse; width:100%; margin:0;">
         <thead><tr>
           <th style="${headStyle} width:40px;">序号</th>
-          <th style="${headStyle} width:120px;">型号</th>
+          <th style="${headStyle} width:120px;">供应商型号</th>
           <th style="${headStyle} width:55px;">图片</th>
           <th style="${headStyle} width:60px;">数量</th>
           <th style="${headStyle} width:75px;">装箱量</th>
@@ -910,12 +1101,20 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
     </div>
 
     <table style="border-collapse:collapse; width:100%; margin-top:8px;">
-      <tr><td style="${sectionStyle} border-top:${BORDER};">统一采购备注 (General Purchase Remarks)</td></tr>
-      <tr><td style="${cellStyle} background:#fff; white-space:pre-wrap;">${generalRemarksText}</td></tr>
+      <tr><td colspan="${plugImgHtml ? 2 : 1}" style="${sectionStyle} border-top:${BORDER};">统一采购备注 (General Purchase Remarks)</td></tr>
+      <tr>
+        <td style="${cellStyle} background:#fff; white-space:pre-wrap; vertical-align:top; text-align:left;">${generalRemarksText}</td>
+        ${plugImgHtml ? `<td style="border:none; padding:6px 8px 6px 0; width:150px; text-align:center; vertical-align:top;">${plugImgHtml}${plugLabelHtml}</td>` : ''}
+      </tr>
     </table>
 
     <table style="border-collapse:collapse; width:100%; margin-top:0;">
-      <tr><td style="${sectionStyle} border-top:${BORDER};">客户需求与其他备注 (Customer Requirements & Other Remarks)</td></tr>
+      <tr><td style="${sectionStyle} border-top:${BORDER};">包装说明 (Packaging Instructions)</td></tr>
+      <tr><td style="${cellStyle} background:#fff; white-space:pre-wrap;">${packagingText ? packagingText.split('\n').map(l => `<div style="margin:0; line-height:1.6;">${(l || '').replace(/</g, '&lt;')}</div>`).join('') : '<span style="color:#64748b; font-style:italic;">无</span>'}</td></tr>
+    </table>
+
+    <table style="border-collapse:collapse; width:100%; margin-top:0;">
+      <tr><td style="${sectionStyle} border-top:${BORDER};">其他备注 (Other Remarks)</td></tr>
       ${photos.length ? `
       <tr><td style="${cellStyle} background:#fff; padding:8px;">
         <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-start;">
@@ -1237,7 +1436,10 @@ async function onSave() {
       product_config_data: parsedConfigData,
       product_config_text: editForm.value.product_config_text || '',
       plug_photos: (editForm.value.plug_photos || []).filter((p) => typeof p === 'string' && p.startsWith('data:image')),
-      remark_note: editForm.value.remark_note
+      remark_note: editForm.value.remark_note,
+      packaging_note: editForm.value.packaging_note || '',
+      // 单选插头 → 存 JSON 数组（后端 Excel 渲染按 accessories_ids[] 处理）
+      accessories_ids: editForm.value.plug_accessory_id ? [editForm.value.plug_accessory_id] : []
     }
 
     // 多供应商：把当前编辑的独立字段写入 sub_orders[active_sub_index]，顶层保留原值（保证两个子合同独立）
@@ -1281,7 +1483,7 @@ async function onSave() {
   finally { saving.value = false }
 }
 
-onMounted(() => { loadList(); loadOptions() })
+onMounted(() => { loadList(); loadOptions(); loadAccessories() })
 </script>
 
 <style scoped>

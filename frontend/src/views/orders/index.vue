@@ -30,6 +30,11 @@
       <el-table-column prop="pi_number" label="PI 编号" width="150" />
       <el-table-column prop="signing_date" label="签约日期" width="110" />
       <el-table-column prop="client_name" label="签约客户" min-width="200" show-overflow-tooltip />
+      <el-table-column prop="client_country" label="国家" width="100" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.client_country || '—' }}
+        </template>
+      </el-table-column>
       <el-table-column label="订单明细" min-width="180">
         <template #default="{ row }">
           {{ row.product_kind_count || 0 }} 种品类 (共 {{ row.total_qty || 0 }} PCS)

@@ -1,4 +1,4 @@
-﻿<template>
+﻿﻿﻿﻿<template>
   <el-card shadow="never" class="page-card">
     <!-- 工具栏 -->
     <div class="toolbar">
@@ -150,7 +150,7 @@
 
         <div class="form-grid-6">
           <el-form-item label="结算币种" prop="currency">
-            <el-select v-model="form.currency" style="width: 100%">
+            <el-select v-model="form.currency" style="width: 100%" @change="onFormCurrencyChange">
               <el-option value="USD" label="USD ($)" />
               <el-option value="RMB" label="RMB (¥)" />
             </el-select>
@@ -267,7 +267,10 @@
               />
             </template>
           </el-table-column>
-          <el-table-column label="单价" width="100" align="center">
+          <el-table-column width="120" align="center">
+            <template #header>
+              <span style="cursor:pointer; user-select:none" @click="togglePriceCurrency">单价({{ priceSign }}) ⇄</span>
+            </template>
             <template #default="{ row }">
               <el-input-number
                 v-model="row.price"
@@ -276,7 +279,7 @@
                 :controls="false"
                 size="small"
                 style="width: 100%"
-                @change="calcQuoteRow(row)"
+                @change="onPriceChange(row)"
               />
             </template>
           </el-table-column>
@@ -285,7 +288,7 @@
             <template #default="{ row }">
               <div class="calc-info" v-if="row.moq && row.pcs_per_ctn">
                 <div class="ci-line"><span class="ci-label">数量:</span> {{ (row.moq * row.pcs_per_ctn).toLocaleString() }} PCS</div>
-                <div class="ci-line"><span class="ci-label">金额:</span> {{ row.currency || form.currency === 'RMB' ? '¥' : '$' }}{{ formatMoney((row.moq || 0) * (row.pcs_per_ctn || 0) * (row.price || 0)) }}</div>
+                <div class="ci-line"><span class="ci-label">金额:</span> {{ priceSign }}{{ formatMoney((row.moq || 0) * (row.pcs_per_ctn || 0) * (row.price || 0)) }}</div>
                 <div class="ci-line"><span class="ci-label">毛重:</span> {{ ((row.moq || 0) * (row.gw_per_ctn || 0)).toFixed(1) }} kg</div>
                 <div class="ci-line"><span class="ci-label">体积:</span> {{ ((row.moq || 0) * (row.cbm_per_ctn || 0)).toFixed(3) }} cbm</div>
               </div>
@@ -299,6 +302,18 @@
             </template>
           </el-table-column>
         </el-table>
+
+        <!-- 明细汇总：总体积 / 总毛重 / 总净重 / 总金额 -->
+        <div class="quote-total-bar">
+          <span>总体积：</span>
+          <span class="total-amount">{{ quoteTotals.cbm }} CBM</span>
+          <span style="margin: 0 24px;">总毛重：</span>
+          <span class="total-amount">{{ quoteTotals.gw }} kg</span>
+          <span style="margin: 0 24px;">总净重：</span>
+          <span class="total-amount">{{ quoteTotals.nw }} kg</span>
+          <span style="margin: 0 24px;">总金额：</span>
+          <span class="total-amount">{{ priceSign }}{{ formatMoney(quoteTotals.amount) }}</span>
+        </div>
 
         <!-- 备注条款 -->
         <div class="remark-block">
@@ -343,7 +358,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, nextTick } from 'vue'
+import { onMounted, reactive, ref, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
@@ -381,6 +396,11 @@ const paymentTermOptions = ref([])
 const companySettings = ref({})
 const query = reactive({ q: '', status: '', page: 1, pageSize: 20 })
 
+// 明细单价币种切换：与外销订单一致，点击单价列头在 ¥/$ 间切换（结算币种跟随开关）
+const priceCurrency = ref('USD') // 'RMB' 或 'USD'
+const priceSign = computed(() => priceCurrency.value === 'RMB' ? '¥' : '$')
+const usdRate = () => Number(companySettings.value.default_usd_rate) || 7.2
+
 const dialogVisible = ref(false)
 const formRef = ref()
 const form = ref({})
@@ -417,7 +437,7 @@ const blankItem = () => ({
   img_url: '', spec: '', packing_desc: '',
   pcs_per_ctn: null, ctn_length: null, ctn_width: null, ctn_height: null,
   nw_per_ctn: null, gw_per_ctn: null, cbm_per_ctn: null,
-  price: undefined, moq: undefined,
+  price: undefined, price_rmb: undefined, moq: undefined,
   est_qty_20gp: null, est_qty_40gp: null, est_qty_40hq: null,
   load_quantity_desc: ''
 })
@@ -485,8 +505,11 @@ function onProductPick(row, productId) {
   row.est_qty_40gp = p.est_qty_40gp ?? null
   row.est_qty_40hq = p.est_qty_40hq ?? null
 
-  // 价格快照
-  row.price = p.export_price_usd ?? undefined
+  // 价格快照：与外销订单一致，以产品库外销价为基准（price_rmb），按当前币种开关派生显示
+  row.price_rmb = p.export_price_usd ?? undefined
+  row.price = row.price_rmb != null
+    ? (priceCurrency.value === 'USD' ? Number((row.price_rmb / usdRate()).toFixed(2)) : row.price_rmb)
+    : undefined
   // 数量(箱) 默认 1 箱
   if (!row.moq) row.moq = 1
   calcQuoteRow(row)
@@ -522,6 +545,49 @@ function addItemRow() {
   form.value.items.push(blankItem())
 }
 
+/* ===== 明细单价币种切换（与外销订单同机制） ===== */
+// 手动改单价：按当前币种同步回写价格基准，避免来回切换换算漂移
+function onPriceChange(row) {
+  const p = Number(row.price) || 0
+  row.price_rmb = priceCurrency.value === 'RMB' ? p : Number((p * usdRate()).toFixed(2))
+}
+
+// 切换明细单价币种：人民币 ↔ 美元（点击单价列头 ⇄ 触发）
+function togglePriceCurrency() {
+  setQuoteCurrency(priceCurrency.value === 'RMB' ? 'USD' : 'RMB')
+}
+
+// 结算币种下拉直接切换：与列头开关走同一套派生逻辑
+function onFormCurrencyChange(val) {
+  setQuoteCurrency(val)
+}
+
+// 统一换币：价格始终从 price_rmb 基准派生，不做反向乘回；结算币种跟随开关
+function setQuoteCurrency(to) {
+  if (to !== 'RMB' && to !== 'USD') return
+  if (to === priceCurrency.value) return
+  ;(form.value.items || []).forEach((it) => {
+    const base = Number(it.price_rmb) || 0
+    if (!base) return // 0 不换算
+    it.price = to === 'RMB' ? base : Number((base / usdRate()).toFixed(2))
+  })
+  priceCurrency.value = to
+  form.value.currency = to
+}
+
+// 明细汇总：总体积 / 总毛重 / 总净重 / 总金额（箱数 moq × 单箱基准值）
+const quoteTotals = computed(() => {
+  let cbm = 0, gw = 0, nw = 0, amount = 0
+  ;(form.value.items || []).forEach((it) => {
+    const ctns = Number(it.moq) || 0
+    cbm += ctns * (Number(it.cbm_per_ctn) || 0)
+    gw += ctns * (Number(it.gw_per_ctn) || 0)
+    nw += ctns * (Number(it.nw_per_ctn) || 0)
+    amount += ctns * (Number(it.pcs_per_ctn) || 0) * (Number(it.price) || 0)
+  })
+  return { cbm: cbm.toFixed(3), gw: gw.toFixed(2), nw: nw.toFixed(2), amount: Number(amount.toFixed(2)) }
+})
+
 // 报价行计算：moq(箱数) × pcs_per_ctn = 总数量, 总数量 × price = 金额
 function calcQuoteRow(row) {
   // 触发响应式更新即可，合计列在模板里直接计算
@@ -533,6 +599,8 @@ function onSearch() { query.page = 1; loadList() }
 
 async function openCreate() {
   form.value = blankForm()
+  // 币种开关按表单默认币种（USD）初始化
+  priceCurrency.value = 'USD'
   // 负责人 = 当前登录人（新增时展示，编辑时展示已保存的负责人）
   form.value.owner_name = userStore.displayName
   // 自动生成报价单号
@@ -560,7 +628,19 @@ async function openCreate() {
 
 async function openEdit(row) {
   const detail = await getQuotation(row.id)
-  form.value = { ...detail, items: detail.items || [] }
+  // 币种开关按报价单存储币种初始化；明细回显价格基准（历史数据无基准 → 按存储币种补偿一次）
+  priceCurrency.value = detail.currency === 'RMB' ? 'RMB' : 'USD'
+  detail.items = (detail.items || []).map((it) => {
+    let base = Number(it.price_rmb)
+    if (!base || isNaN(base)) {
+      const saved = Number(it.price) || 0
+      base = saved > 0 && detail.currency === 'USD'
+        ? Number((saved * usdRate()).toFixed(2))
+        : saved
+    }
+    return { ...it, price_rmb: base || undefined, price: Number(it.price) }
+  })
+  form.value = { ...detail, items: detail.items }
   dialogVisible.value = true
 }
 
@@ -830,6 +910,21 @@ onMounted(() => { loadList(); loadOptions() })
 }
 .items-table .el-table__cell {
   padding: 4px 6px;
+}
+.quote-total-bar {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  margin-top: 10px;
+  background: #f0f7ff;
+  border: 1px solid #bfd8f5;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #303133;
+}
+.quote-total-bar .total-amount {
+  font-weight: 700;
+  color: #059669;
 }
 .no-photo {
   width: 48px;

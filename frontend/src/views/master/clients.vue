@@ -1,4 +1,4 @@
-﻿<template>
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<template>
   <el-card shadow="never" class="page-card">
     <!-- 工具栏 -->
     <div class="toolbar">
@@ -19,7 +19,7 @@
     <!-- 列表 -->
     <el-table v-loading="loading" :data="list" border stripe @selection-change="onSelectionChange">
       <el-table-column v-if="isAdmin" type="selection" width="44" />
-      <el-table-column prop="name_en" label="客户英文名" min-width="230" show-overflow-tooltip />
+      <el-table-column prop="name_en" label="客户公司名称" min-width="230" show-overflow-tooltip />
       <el-table-column prop="short_name" label="客户简称" width="150" show-overflow-tooltip>
         <template #default="{ row }">{{ row.short_name || '—' }}</template>
       </el-table-column>
@@ -68,7 +68,7 @@
       <el-form ref="formRef" :model="form" :rules="rules" :disabled="readonly" label-width="90px">
         <el-row :gutter="16">
           <el-col :span="12">
-            <el-form-item label="英文名称" prop="name_en">
+            <el-form-item label="公司名称" prop="name_en">
               <el-input v-model="form.name_en" placeholder="GLOBAL ... LLC" />
             </el-form-item>
           </el-col>
@@ -224,7 +224,7 @@ const readonly = ref(false)
 const formRef = ref()
 const form = ref({})
 const rules = {
-  name_en: [{ required: true, message: '请输入客户英文名', trigger: 'blur' }],
+  name_en: [{ required: true, message: '请输入客户公司名称', trigger: 'blur' }],
   country: [{ required: true, message: '请输入国家/地区', trigger: 'blur' }],
   address_en: [{ required: true, message: '请输入英文地址', trigger: 'blur' }]
 }

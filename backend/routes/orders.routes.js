@@ -41,18 +41,37 @@ async function normalizeItems(items, conn) {
     .filter((it) => it && (it.model || it.product_id || it.name_en))
     .map((it) => ({ ...it }));
 
-  // 1. 批量从产品库取采购价（cost_cny 权威来源）
+  // 1. 批量从产品库取采购价 + 装箱快照字段（权威来源）
   const productIds = arr.map(it => it.product_id).filter(Boolean);
   const productCostMap = new Map();
+  const productSnapMap = new Map();
   if (productIds.length > 0 && conn) {
     const [prods] = await conn.query(
-      `SELECT id, purchase_cost_rmb FROM products WHERE id IN (${productIds.join(',')})`
+      `SELECT id, purchase_cost_rmb, pcs_per_ctn, net_weight_kg, gross_weight_kg, ctn_cbm FROM products WHERE id IN (${productIds.join(',')})`
     );
-    for (const p of prods) productCostMap.set(p.id, Number(p.purchase_cost_rmb) || 0);
+    for (const p of prods) {
+      productCostMap.set(p.id, Number(p.purchase_cost_rmb) || 0);
+      productSnapMap.set(p.id, {
+        pcs_per_ctn: Number(p.pcs_per_ctn) || 0,
+        nw_per_ctn: Number(p.net_weight_kg) || 0,
+        gw_per_ctn: Number(p.gross_weight_kg) || 0,
+        cbm_per_ctn: Number(p.ctn_cbm) || 0
+      });
+    }
   }
 
-  // 2. 逐行填充缺失的采购价，联动小计
+  // 2. 逐行填充缺失的快照字段 + 采购价，联动小计
   return arr.map((row) => {
+    const snap = row.product_id && productSnapMap.has(row.product_id) ? productSnapMap.get(row.product_id) : null;
+
+    // 装箱快照：前端没传 → 从产品库取
+    if (snap) {
+      if (!row.pcs_per_ctn) row.pcs_per_ctn = snap.pcs_per_ctn;
+      if (!row.nw_per_ctn)  row.nw_per_ctn  = snap.nw_per_ctn;
+      if (!row.gw_per_ctn)  row.gw_per_ctn  = snap.gw_per_ctn;
+      if (!row.cbm_per_ctn) row.cbm_per_ctn = snap.cbm_per_ctn;
+    }
+
     // cost_cny 取值优先级：① 前端显式传 ② 产品库 purchase_cost_rmb ③ 兜底为 price
     if (row.cost_cny === undefined || row.cost_cny === null || row.cost_cny === '') {
       if (row.product_id && productCostMap.has(row.product_id)) {
@@ -199,14 +218,17 @@ router.get(
       `SELECT oi.*, p.spec_cn, p.our_model AS product_our_model, p.purchase_cost_rmb AS product_purchase_cost,
               p.supplier_id AS product_supplier_id, p.product_type AS product_type, s.name AS product_supplier_name,
               p.hs_code AS product_hs_code,
-              MIN(h.product_name) AS hs_product_name,
-              MIN(h.declaration_elements) AS hs_elements
+              h.product_name AS hs_product_name,
+              h.declaration_elements AS hs_elements,
+              h.unit AS hs_unit
        FROM order_items oi
        LEFT JOIN products p ON oi.product_id = p.id
        LEFT JOIN suppliers s ON p.supplier_id = s.id
-       LEFT JOIN hs_codes h ON p.hs_code COLLATE utf8mb4_general_ci = h.hs_code COLLATE utf8mb4_general_ci
+       -- 优先用 products.hs_code_id 精确关联 hs_codes 某一条，fallback 到 hs_code 模糊匹配
+       LEFT JOIN hs_codes h ON (p.hs_code_id IS NOT NULL AND h.id = p.hs_code_id)
+                            OR (p.hs_code_id IS NULL AND p.hs_code COLLATE utf8mb4_general_ci = h.hs_code COLLATE utf8mb4_general_ci)
        WHERE oi.order_id = ?
-       GROUP BY oi.id
+       GROUP BY oi.id, h.product_name, h.declaration_elements, h.unit
        ORDER BY oi.id ASC`,
       [order.id]
     );
@@ -240,6 +262,8 @@ function mergeSubFields(po, subOrder) {
   const merged = { ...po };
   const perSubKeys = [
     'product_config_types', 'product_config_data', 'product_config_text',
+    'accessories_ids',
+    'packaging_note',
     'plug_photos', 'remark_note'
   ];
   for (const k of perSubKeys) {
@@ -429,10 +453,41 @@ router.get(
       newRow.commit();
     }
 
+    // ===== 配件（提前查：决定模块二内容行是否给右侧 H 列留出插头图区域）=====
+    let accessoriesData = [];
+    const accessoriesIds = Array.isArray(src.accessories_ids) ? src.accessories_ids : [];
+    if (accessoriesIds.length) {
+      try {
+        const [accRows] = await pool.query(
+          `SELECT a.*, c.name AS category_name FROM accessories a
+           LEFT JOIN accessory_categories c ON a.category_id = c.id
+           WHERE a.id IN (?)`,
+          [accessoriesIds]
+        );
+        const idOrder = new Map(accessoriesIds.map((id, i) => [id, i]));
+        accessoriesData = accRows.sort((a, b) => (idOrder.get(a.id) || 0) - (idOrder.get(b.id) || 0));
+      } catch { accessoriesData = []; }
+    }
+    const plugAcc = accessoriesData.find(a => a.category_name === '插头') || accessoriesData[0];
+    const hasPlugImg = !!(plugAcc && plugAcc.image_url && typeof plugAcc.image_url === 'string' && plugAcc.image_url.startsWith('data:image'));
+
+    // ===== 插入「包装说明」模块两行（Row13+extra 标题 + Row14+extra 内容），模块三及以下整体下移 2 行 =====
+    const mod2TitleStyle = JSON.parse(JSON.stringify(ws.getCell(`A${11 + extra}`).style || {}));
+    const mod2ContentStyle = JSON.parse(JSON.stringify(ws.getCell(`A${12 + extra}`).style || {}));
+    ws.insertRow(13 + extra, []);
+    ws.insertRow(13 + extra, []);
+    ws.getRow(13 + extra).height = 25;   // 包装说明标题行
+    ws.getRow(14 + extra).height = 70;   // 包装说明内容行
+    ws.getCell(`A${13 + extra}`).style = mod2TitleStyle;
+    ws.getCell(`A${14 + extra}`).style = mod2ContentStyle;
+
     // ===== 重建固定区合并（插行后原合并下移但 _merges 不动）=====
-    rebuildPoMerges(ws, extra);
+    rebuildPoMerges(ws, extra, hasPlugImg ? 7 : 8);
     // ===== 重建明细行 F:G 合并 =====
     rebuildDetailMerges(ws, DETAIL_START, Math.max(detailRows.length, DETAIL_CAPACITY + extra));
+
+    // ===== 覆盖模板表头：型号 → 供应商型号 =====
+    ws.getCell('B6').value = '供应商型号';
 
     // ===== 明细写入 =====
     // 列映射：A序号 B型号 C图片 D数量 E装箱量 F:G详细规范 H备注
@@ -450,15 +505,43 @@ router.get(
     // 清空明细区未使用行
     clearUnusedDetailRows(ws, DETAIL_START, detailRows.length, DETAIL_CAPACITY + extra);
 
-    // ===== 统一采购备注（A12，插行后为 A(12+extra)）：写入模块2 电气配置数据 =====
+    // ===== 统一采购备注（A(12+extra)）：模块2 内容行；有插头图时内容行只合并 A:G，H 列放插头图+红底标签 =====
     const remarksText = buildGeneralRemarks(src, configFields, configData);
+    const remarkRow = 12 + extra;
     if (remarksText) {
-      ws.getCell(`A${12 + extra}`).value = remarksText;
+      const cell = ws.getCell(`A${remarkRow}`);
+      cell.value = remarksText;
+      cell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+    }
+    if (hasPlugImg) {
+      try {
+        const ext = plugAcc.image_url.startsWith('data:image/png') ? 'png' : 'jpeg';
+        const base64 = plugAcc.image_url.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
+        const imgId = wb.addImage({ base64, extension: ext });
+        // H 列宽约 132px，图片 128x115 贴 H 列顶部，行高 118pt≈157px，底部露红色标签区
+        ws.addImage(imgId, {
+          tl: { col: 7.01, row: remarkRow - 1 + 0.03 },  // 0-based：col 7 = H 列，row = 行号-1
+          ext: { width: 128, height: 115 },
+          editAs: 'oneCell'
+        });
+        // H 列红底白字标签（插头名称），垂直居底 → 图片盖住上半部分，底部露出红标签
+        const labelCell = ws.getCell(`H${remarkRow}`);
+        labelCell.value = plugAcc.name || '插头';
+        labelCell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+        labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE60012' } };
+        labelCell.alignment = { horizontal: 'center', vertical: 'bottom' };
+      } catch { /* 图片嵌入失败不阻断 */ }
     }
 
-    // ===== 实物图片（A15+extra，靠左独占一行，每张 100x100）=====
+    // ===== 包装说明（Row13+extra 标题 + Row14+extra 内容）=====
+    ws.getCell(`A${13 + extra}`).value = '■ 包装说明 (Packaging Instructions):';
+    const packCell = ws.getCell(`A${14 + extra}`);
+    packCell.value = (src.packaging_note && String(src.packaging_note).trim()) ? String(src.packaging_note).trim() : '无';
+    packCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
+
+    // ===== 实物图片（A17+extra，靠左独占一行，每张 100x100；包装说明插入后由 15+extra 平移 2 行）=====
     const photos = Array.isArray(src.plug_photos) ? src.plug_photos.filter(p => typeof p === 'string' && p.startsWith('data:image')) : [];
-    const photoRow = 15 + extra;
+    const photoRow = 17 + extra;
     for (let pi = 0; pi < photos.length; pi++) {
       const dataUrl = photos[pi];
       try {
@@ -476,8 +559,8 @@ router.get(
       ws.getRow(photoRow).height = 80;
     }
 
-    // ===== 备注（A16+extra）：写入模块3 备注 =====
-    ws.getCell(`A${16 + extra}`).value = src.remark_note || '无';
+    // ===== 备注（A18+extra）：写入模块3 备注 =====
+    ws.getCell(`A${18 + extra}`).value = src.remark_note || '无';
 
     // ===== 输出 .xlsx =====
     const fileSuffix = subOrder ? `-${subIndex + 1}` : '';
@@ -704,7 +787,7 @@ router.put(
         if (!docsMissing) {
           let oldPo = {};
           try { oldPo = typeof oldRow.production_order === 'string' ? JSON.parse(oldRow.production_order) : (oldRow.production_order || {}); } catch {}
-          const preservePoKeys = ['item_extensions', 'product_config_data', 'product_config_types', 'plug_photos', 'remark_note', 'po_number'];
+          const preservePoKeys = ['item_extensions', 'product_config_data', 'product_config_types', 'plug_photos', 'remark_note', 'packaging_note', 'accessories_ids', 'po_number'];
           for (const k of preservePoKeys) {
             if (oldPo[k] !== undefined && oldPo[k] !== null) docs.production_order[k] = oldPo[k];
           }
@@ -729,7 +812,7 @@ router.put(
             docs.production_order.sub_orders.forEach(newSub => {
               const oldSub = oldPo.sub_orders.find(s => s.supplier_id === newSub.supplier_id);
               if (oldSub) {
-                const subKeys = ['product_config_data', 'product_config_types', 'plug_photos', 'remark_note', 'tech_req', 'mark_req'];
+                const subKeys = ['product_config_data', 'product_config_types', 'plug_photos', 'remark_note', 'packaging_note', 'accessories_ids', 'tech_req', 'mark_req'];
                 for (const k of subKeys) {
                   if (oldSub[k] !== undefined && oldSub[k] !== null) newSub[k] = oldSub[k];
                 }

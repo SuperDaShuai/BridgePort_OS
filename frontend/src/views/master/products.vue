@@ -30,12 +30,19 @@
         <el-button :type="priceCurrency === 'USD' ? 'primary' : 'default'" @click="setListCurrency('USD')">$ USD</el-button>
       </el-button-group>
       <div class="toolbar-right">
+        <el-button
+          type="success"
+          plain
+          :disabled="!selectedProducts.length"
+          @click="openParamDialog"
+        >导出参数列表{{ selectedProducts.length ? ` (${selectedProducts.length})` : '' }}</el-button>
         <el-button v-if="canEdit" type="primary" :icon="Plus" @click="openCreate">新增产品</el-button>
       </div>
     </div>
 
     <!-- 列表 -->
-    <el-table v-loading="loading" :data="list" border stripe>
+    <el-table v-loading="loading" :data="list" border stripe @selection-change="onSelectionChange">
+      <el-table-column type="selection" width="42" fixed />
       <el-table-column label="图片" width="60" align="center">
         <template #default="{ row }">
           <el-image
@@ -156,13 +163,13 @@
         <el-divider content-position="left">基本信息</el-divider>
         <el-row :gutter="16">
           <el-col :span="8">
-            <el-form-item label="型号" prop="model">
+            <el-form-item label="型号 (内部编号)" prop="model">
               <el-input v-model="form.model" />
             </el-form-item>
           </el-col>
           <el-col :span="8" v-if="!userStore.hideSupplierInfo">
             <el-form-item label="供应商型号">
-              <el-input v-model="form.our_model" placeholder="供应商型号" />
+              <el-input v-model="form.our_model" placeholder="供应商给的型号，如 qe-01" />
             </el-form-item>
           </el-col>
           <el-col :span="8">
@@ -186,23 +193,25 @@
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="HS编码" prop="hs_code">
+            <el-form-item label="HS编码" prop="hs_code_id">
               <el-select
-                v-model="form.hs_code"
+                v-model="form.hs_code_id"
                 filterable
-                allow-create
-                default-first-option
                 clearable
-                placeholder="选择或输入HS编码"
+                placeholder="选择 HS 编码库中的一条（精确关联）"
                 style="width: 100%"
+                @change="onHsCodeChange"
               >
                 <el-option
                   v-for="h in hsCodeOptions"
                   :key="h.id"
-                  :label="`${h.hs_code} - ${h.product_short_name || h.product_name || ''}`"
-                  :value="h.hs_code"
+                  :label="`${h.hs_code} | 申报品名: ${h.product_name || ''} | 简称: ${h.product_short_name || ''} | 单位: ${h.unit || ''}`"
+                  :value="h.id"
                 />
               </el-select>
+              <div v-if="form.hs_code_id" style="font-size: 12px; color: #909399; margin-top: 4px">
+                已选: {{ form.hs_code }} → {{ getHsLabel(form.hs_code_id) }}
+              </div>
             </el-form-item>
           </el-col>
           <el-col :span="8" v-if="!userStore.hideSupplierInfo">
@@ -432,6 +441,60 @@
         <el-button @click="photoDialogVisible = false">关 闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 参数列表导出弹窗：数量可改，箱数/总净重/总毛重/总体积关联计算 -->
+    <el-dialog v-model="paramDialogVisible" title="产品参数列表导出" width="1180px" :close-on-click-modal="false">
+      <el-table :data="paramRows" border max-height="460">
+        <el-table-column type="index" label="序号" width="55" align="center" />
+        <el-table-column label="图片" width="60" align="center">
+          <template #default="{ row }">
+            <el-image
+              v-if="row.img_url"
+              :src="row.img_url"
+              :preview-src-list="[row.img_url]"
+              preview-teleported
+              fit="contain"
+              style="width: 40px; height: 40px"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column prop="model" label="型号" width="110" show-overflow-tooltip />
+        <el-table-column prop="name_cn" label="中文品名" width="120" show-overflow-tooltip />
+        <el-table-column label="数量(件)" width="130" align="center">
+          <template #default="{ row }">
+            <el-input-number v-model="row.qty" :min="0" :controls="false" style="width: 100px" />
+          </template>
+        </el-table-column>
+        <el-table-column label="装箱量" width="90" align="center">
+          <template #default="{ row }">{{ row.pcs_per_ctn ? `${row.pcs_per_ctn}件/箱` : '—' }}</template>
+        </el-table-column>
+        <el-table-column label="箱数" width="70" align="center">
+          <template #default="{ row }">{{ paramCtn(row) || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="单箱净/毛重(kg)" width="130" align="center">
+          <template #default="{ row }">{{ row.net_weight_kg ?? '—' }} / {{ row.gross_weight_kg ?? '—' }}</template>
+        </el-table-column>
+        <el-table-column label="总净重(kg)" width="100" align="right">
+          <template #default="{ row }">{{ paramNw(row) }}</template>
+        </el-table-column>
+        <el-table-column label="总毛重(kg)" width="100" align="right">
+          <template #default="{ row }">{{ paramGw(row) }}</template>
+        </el-table-column>
+        <el-table-column label="总体积(cbm)" width="100" align="right">
+          <template #default="{ row }">{{ paramCbm(row) }}</template>
+        </el-table-column>
+        <el-table-column prop="remark" label="备注" min-width="120" show-overflow-tooltip />
+      </el-table>
+      <div class="param-total-bar">
+        合计：数量 <b>{{ paramTotals.qty }}</b> 件 ｜ 箱数 <b>{{ paramTotals.ctn }}</b> 箱 ｜
+        总净重 <b>{{ paramTotals.nw }}</b> kg ｜ 总毛重 <b>{{ paramTotals.gw }}</b> kg ｜ 总体积 <b>{{ paramTotals.cbm }}</b> cbm
+      </div>
+      <template #footer>
+        <el-button @click="paramDialogVisible = false">取 消</el-button>
+        <el-button type="warning" @click="downloadParamPdf">下载 PDF</el-button>
+        <el-button type="primary" :loading="paramExporting" @click="downloadParamList">下载 Excel</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -477,6 +540,165 @@ const photoCurrent = ref(null)
 const photoList = ref([])
 const photoLoading = ref(false)
 
+// ===== 参数列表导出：多选产品 + 可改数量 → 关联计算箱数/总净重/总毛重/总体积 =====
+const selectedProducts = ref([])          // 列表勾选（当前页）
+const paramDialogVisible = ref(false)
+const paramRows = ref([])                 // 弹窗行：产品数据 + qty
+const paramExporting = ref(false)
+
+function onSelectionChange(rows) {
+  selectedProducts.value = rows || []
+}
+
+// 打开导出弹窗：默认数量 = 一整箱（pcs_per_ctn），无装箱量默认 1
+function openParamDialog() {
+  if (!selectedProducts.value.length) {
+    ElMessage.warning('请先在列表中勾选产品')
+    return
+  }
+  paramRows.value = selectedProducts.value.map(p => ({
+    ...p,
+    qty: Number(p.pcs_per_ctn) > 0 ? Number(p.pcs_per_ctn) : 1
+  }))
+  paramDialogVisible.value = true
+}
+
+// 关联计算：数量(件) → 箱数 = ceil(qty / pcs_per_ctn)
+function paramCtn(r) {
+  const pcs = Number(r.pcs_per_ctn) || 0
+  const q = Number(r.qty) || 0
+  return pcs > 0 && q > 0 ? Math.ceil(q / pcs) : 0
+}
+const round2 = v => Math.round((Number(v) || 0) * 100) / 100
+const round3 = v => Math.round((Number(v) || 0) * 1000) / 1000
+function paramNw(r) { return round2(paramCtn(r) * (Number(r.net_weight_kg) || 0)) }
+function paramGw(r) { return round2(paramCtn(r) * (Number(r.gross_weight_kg) || 0)) }
+function paramCbm(r) { return round3(paramCtn(r) * (Number(r.ctn_cbm) || 0)) }
+
+const paramTotals = computed(() => {
+  let qty = 0, ctn = 0, nw = 0, gw = 0, cbm = 0
+  for (const r of paramRows.value) {
+    qty += Number(r.qty) || 0
+    ctn += paramCtn(r)
+    nw += paramNw(r)
+    gw += paramGw(r)
+    cbm += paramCbm(r)
+  }
+  return { qty, ctn, nw: round2(nw), gw: round2(gw), cbm: round3(cbm) }
+})
+
+async function downloadParamList() {
+  paramExporting.value = true
+  try {
+    const token = localStorage.getItem('bp_token') || ''
+    const res = await fetch('/api/products/export-params', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        items: paramRows.value.map(r => ({ id: r.id, qty: Number(r.qty) || 0 }))
+      })
+    })
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '')
+      ElMessage.error('下载失败：' + (errText || res.status))
+      return
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = '产品参数列表.xlsx'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success('参数列表已下载')
+    paramDialogVisible.value = false
+  } catch (e) {
+    ElMessage.error('下载失败：' + (e.message || '网络异常'))
+  } finally {
+    paramExporting.value = false
+  }
+}
+
+// 下载 PDF：打印窗口渲染 16 列参数表（与 Excel 版列结构一致）→ 打印对话框选「另存为 PDF」
+function downloadParamPdf() {
+  if (!paramRows.value.length) return
+  const esc = (s) => String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const fmtCtnSize = (r) => {
+    const dims = [r.ctn_length, r.ctn_width, r.ctn_height]
+    return dims.every(v => v != null && v !== '') ? dims.join('×') : '—'
+  }
+  const rowsHtml = paramRows.value.map((r, i) => `
+    <tr>
+      <td class="c">${i + 1}</td>
+      <td class="c">${r.img_url ? `<img src="${esc(r.img_url)}" />` : '—'}</td>
+      <td>${esc(r.model) || '—'}</td>
+      <td>${esc(r.name_cn) || '—'}</td>
+      <td>${esc(r.name_en) || '—'}${r.spec ? `<div class="spec">${esc(r.spec)}</div>` : ''}</td>
+      <td>${esc(r.hs_code) || '—'}</td>
+      <td class="r">${Number(r.qty) || 0}</td>
+      <td class="c">${r.pcs_per_ctn ? `${r.pcs_per_ctn}件/箱` : '—'}</td>
+      <td class="r">${paramCtn(r)}</td>
+      <td class="c">${fmtCtnSize(r)}</td>
+      <td class="r">${r.net_weight_kg ?? '—'}</td>
+      <td class="r">${r.gross_weight_kg ?? '—'}</td>
+      <td class="r">${r.ctn_cbm ?? '—'}</td>
+      <td class="r">${paramNw(r)}</td>
+      <td class="r">${paramGw(r)}</td>
+      <td class="r">${paramCbm(r)}</td>
+    </tr>`).join('')
+  const t = paramTotals.value
+  const d = new Date()
+  const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>产品参数列表</title>
+<style>
+  @page { size: A4 landscape; margin: 10mm; }
+  body { font-family: "Microsoft YaHei", Arial, sans-serif; margin: 0; color: #0f172a; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  h1 { font-size: 16px; margin: 0; }
+  .date { font-size: 10px; color: #64748b; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.5px; }
+  th, td { border: 1px solid #94a3b8; padding: 3px 4px; word-break: break-all; }
+  th { background: #1f4e78; color: #fff; font-weight: 700; text-align: center; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+  td.c { text-align: center; }
+  td.r { text-align: right; }
+  td img { width: 50px; height: 50px; object-fit: contain; display: block; margin: 0 auto; }
+  .spec { color: #64748b; font-size: 7.5px; margin-top: 2px; }
+  tfoot td { background: #d9e1f2; font-weight: 700; }
+</style></head><body>
+<div class="head"><h1>产品参数列表</h1><span class="date">导出日期：${dateStr}</span></div>
+<table>
+  <thead><tr>
+    <th>序号</th><th>图片</th><th>型号</th><th>中文品名</th><th>英文品名/规格</th><th>HS编码</th>
+    <th>数量(件)</th><th>装箱量</th><th>箱数</th><th>箱尺寸(cm)</th>
+    <th>单箱净重(kg)</th><th>单箱毛重(kg)</th><th>箱体积(cbm)</th>
+    <th>总净重(kg)</th><th>总毛重(kg)</th><th>总体积(cbm)</th>
+  </tr></thead>
+  <tbody>${rowsHtml}</tbody>
+  <tfoot><tr>
+    <td class="c" colspan="6">合计</td>
+    <td class="r">${t.qty}</td><td></td><td class="r">${t.ctn}</td><td colspan="4"></td>
+    <td class="r">${t.nw}</td><td class="r">${t.gw}</td><td class="r">${t.cbm}</td>
+  </tr></tfoot>
+</table>
+</body></html>`
+  const win = window.open('', '_blank', 'width=1280,height=900')
+  if (!win) {
+    ElMessage.error('弹窗被浏览器拦截，请允许弹出窗口后重试')
+    return
+  }
+  win.document.write(html)
+  win.document.close()
+  win.focus()
+  setTimeout(() => win.print(), 300)
+  ElMessage.info('已打开打印窗口，在打印对话框中选择「另存为 PDF」即可下载')
+}
+
 const loading = ref(false)
 const saving = ref(false)
 const list = ref([])
@@ -492,7 +714,7 @@ const formRef = ref()
 const form = ref({})
 const rules = {
   model: [{ required: true, message: '请输入型号', trigger: 'blur' }],
-  hs_code: [{ required: true, message: '请输入HS编码', trigger: 'blur' }],
+  hs_code_id: [{ required: true, message: '请选择 HS 编码', trigger: 'change' }],
   name_en: [{ required: true, message: '请输入英文品名', trigger: 'blur' }]
 }
 
@@ -506,9 +728,25 @@ const NUMERIC_FIELDS = [
 ]
 
 const blankForm = () => ({
-  model: '', our_model: '', product_type: '', hs_code: '', supplier_id: null, name_cn: '', name_en: '', spec: '', spec_cn: '', remark: '', delivery_period: '', img_url: '',
+  model: '', our_model: '', product_type: '', hs_code: '', hs_code_id: null, supplier_id: null, name_cn: '', name_en: '', spec: '', spec_cn: '', remark: '', delivery_period: '', img_url: '',
   ...Object.fromEntries(NUMERIC_FIELDS.map((k) => [k, undefined]))
 })
+
+// HS 编码精确关联：选了 hs_code_id 后同步 hs_code 字符串
+function onHsCodeChange(id) {
+  if (!id) {
+    form.value.hs_code = ''
+    return
+  }
+  const h = hsCodeOptions.value.find((x) => x.id === id)
+  if (h) form.value.hs_code = h.hs_code
+}
+
+function getHsLabel(id) {
+  const h = hsCodeOptions.value.find((x) => x.id === id)
+  if (!h) return ''
+  return `${h.product_name || ''} / ${h.product_short_name || ''} / ${h.unit || ''}`
+}
 
 // 外箱尺寸 → 自动算 CBM = L×W×H / 1000000（@change 触发，此时 v-model 已更新）
 function autoCalcCbm() {
@@ -773,5 +1011,19 @@ onMounted(() => {
   border-top: 1px dashed #dcdfe6;
   display: flex;
   align-items: center;
+}
+/* 参数列表导出弹窗合计条 */
+.param-total-bar {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #f0f7ff;
+  border: 1px solid #d9e1f2;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #334155;
+}
+.param-total-bar b {
+  color: #1f4e78;
+  margin: 0 2px;
 }
 </style>

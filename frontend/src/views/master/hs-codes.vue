@@ -1,4 +1,4 @@
-﻿﻿﻿﻿<template>
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<template>
   <el-card shadow="never" class="page-card">
     <!-- 工具栏 -->
     <div class="toolbar">
@@ -19,9 +19,12 @@
     <!-- 列表 -->
     <el-table v-loading="loading" :data="list" border stripe>
       <el-table-column prop="hs_code" label="HS编码" width="140" />
-      <el-table-column prop="product_name" label="HS产品名称" min-width="180" show-overflow-tooltip />
+      <el-table-column prop="product_name" label="申报品名" min-width="180" show-overflow-tooltip />
       <el-table-column prop="product_short_name" label="产品简称" width="140" show-overflow-tooltip>
         <template #default="{ row }">{{ row.product_short_name || '—' }}</template>
+      </el-table-column>
+      <el-table-column prop="unit" label="单位" width="80" align="center">
+        <template #default="{ row }">{{ row.unit || '—' }}</template>
       </el-table-column>
       <el-table-column label="申报要素" min-width="300">
         <template #default="{ row }">
@@ -60,11 +63,14 @@
         <el-form-item label="HS编码" prop="hs_code">
           <el-input v-model="form.hs_code" placeholder="如：85437099" maxlength="20" />
         </el-form-item>
-        <el-form-item label="HS产品名称" prop="product_name">
+        <el-form-item label="申报品名" prop="product_name">
           <el-input v-model="form.product_name" placeholder="如：其他电气信号装置" />
         </el-form-item>
         <el-form-item label="产品简称" prop="product_short_name">
           <el-input v-model="form.product_short_name" placeholder="如：电信号装置（可选）" maxlength="100" />
+        </el-form-item>
+        <el-form-item label="计量单位" prop="unit">
+          <el-input v-model="form.unit" placeholder="如：台 / 套 / 千克 / 个" maxlength="20" />
         </el-form-item>
         <el-form-item label="申报要素" prop="declaration_elements">
           <el-input
@@ -107,11 +113,11 @@ const formRef = ref()
 const form = ref({})
 const rules = {
   hs_code: [{ required: true, message: '请输入HS编码', trigger: 'blur' }],
-  product_name: [{ required: true, message: '请输入HS产品名称', trigger: 'blur' }]
+  product_name: [{ required: true, message: '请输入申报品名', trigger: 'blur' }]
 }
 
 const blankForm = () => ({
-  hs_code: '', product_name: '', product_short_name: '', declaration_elements: ''
+  hs_code: '', product_name: '', product_short_name: '', unit: '', declaration_elements: ''
 })
 
 async function loadList() {

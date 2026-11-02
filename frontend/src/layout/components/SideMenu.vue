@@ -83,6 +83,7 @@
         <el-menu-item v-if="userStore.canSee([1, 2, 3])" index="/master/products">产品数据库</el-menu-item>
         <el-menu-item v-if="userStore.canSee([1, 2])" index="/master/product-configs">产品配置管理</el-menu-item>
         <el-menu-item v-if="userStore.canSee([1, 2, 3])" index="/master/hs-codes">HS编码库</el-menu-item>
+        <el-menu-item v-if="userStore.canSee([1, 2])" index="/master/accessories">配件管理</el-menu-item>
         <el-menu-item v-if="userStore.canSee([1, 2, 4])" index="/master/suppliers">供应商管理</el-menu-item>
 
       </el-sub-menu>

@@ -1116,6 +1116,94 @@ const migrations = [
       const sql = fs.readFileSync(sqlPath, 'utf8');
       await runSQL(conn, sql);
     }
+  },
+
+  // 049 hs_codes 增加 unit 计量单位字段
+  {
+    id: 49,
+    name: 'hs_codes_unit',
+    desc: 'hs_codes 表新增 unit VARCHAR(20) 计量单位（台/套/千克等）',
+    async check(conn) {
+      const [rows] = await conn.query(
+        `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hs_codes' AND COLUMN_NAME = 'unit'`
+      );
+      return rows[0].c > 0;
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '049_hs_codes_unit.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
+  },
+
+  // 050 products 增加 hs_code_id 精确关联 hs_codes（允许同 hs_code 多条时按外键匹配）
+  {
+    id: 50,
+    name: 'products_hs_code_id',
+    desc: 'products 表新增 hs_code_id INT 外键，精确关联 hs_codes 表的某一条',
+    async check(conn) {
+      const [rows] = await conn.query(
+        `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'products' AND COLUMN_NAME = 'hs_code_id'`
+      );
+      return rows[0].c > 0;
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '050_products_hs_code_id.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
+  },
+
+  // 051 配件管理模块（accessory_categories + accessories）
+  {
+    id: 51,
+    name: 'accessories',
+    desc: '新增配件分类表 accessory_categories 和配件表 accessories，预置插头/秤盘/电池/充电器/配件 5 个分类',
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '051_accessories.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
+  },
+
+  // 052 密码修改申请表（申请-审批制）
+  {
+    id: 52,
+    name: 'password_change_requests',
+    desc: '新建 password_change_requests 表：员工发起密码修改申请，超级管理员审批通过后生效',
+    async check(conn) {
+      return await tableExists(conn, 'password_change_requests');
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '052_password_change_requests.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
+  },
+
+  // 053 账户修改记录表升级：申请-审批制 → 直接修改 + 记录制
+  {
+    id: 53,
+    name: 'account_change_log',
+    desc: 'password_change_requests 表加 action/detail 列，密码/登录账号改为本人直接修改并记录在案，作废历史待审批申请',
+    async check(conn) {
+      return await columnExists(conn, 'password_change_requests', 'action');
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '053_account_change_log.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
   }
 ];
 

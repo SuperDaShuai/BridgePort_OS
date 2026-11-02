@@ -4,7 +4,6 @@
     <div class="page-header" style="display: flex; align-items: center; gap: 16px;">
       <h2 class="page-title">采购管理 - 购销合同</h2>
       <el-radio-group v-model="filterType" size="small">
-        <el-radio-button value="all">全部</el-radio-button>
         <el-radio-button value="order">外销订单</el-radio-button>
         <el-radio-button value="sample">样品单</el-radio-button>
       </el-radio-group>
@@ -292,12 +291,9 @@ const canMaintain = userStore.permissionLevel <= 2
 const loading = ref(false)
 const saving = ref(false)
 const list = ref([])
-// 来源筛选：all=全部 / order=仅外销订单 / sample=仅样品单
-const filterType = ref('all')
-const filteredList = computed(() => {
-  if (filterType.value === 'all') return list.value
-  return list.value.filter((row) => row.ref_type === filterType.value)
-})
+// 来源筛选：order=仅外销订单 / sample=仅样品单
+const filterType = ref('order')
+const filteredList = computed(() => list.value.filter((row) => row.ref_type === filterType.value))
 const supplierOptions = ref([])
 const companySettings = ref({})
 

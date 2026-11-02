@@ -1,4 +1,4 @@
-﻿<template>
+﻿﻿﻿﻿<template>
   <el-card shadow="never" class="page-card">
     <!-- 工具栏 -->
     <div class="toolbar">
@@ -12,6 +12,7 @@
       />
       <el-button :icon="Search" @click="onSearch">搜索</el-button>
       <div class="toolbar-right">
+        <el-button type="warning" plain @click="openChangeLogs">账户修改记录</el-button>
         <el-button type="primary" :icon="Plus" @click="openCreate">新增员工</el-button>
       </div>
     </div>
@@ -155,6 +156,64 @@
         <el-button type="primary" :loading="saving" @click="onSave">保 存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 账户修改记录弹窗（只读：员工在个人中心的修改留痕，无需审批） -->
+    <el-dialog
+      v-model="logDialogVisible" :close-on-click-modal="false"
+      title="账户修改记录"
+      width="860px"
+    >
+      <el-alert
+        title="员工在个人中心修改密码 / 登录账号即时生效，此处可查看全部修改记录"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px;"
+      />
+      <el-table v-loading="logLoading" :data="changeLogs" border size="small" max-height="420">
+        <el-table-column label="操作人" width="150">
+          <template #default="{ row }">
+            <div><b>{{ row.display_name || '—' }}</b></div>
+            <div style="font-size:11px; color:#909399;">{{ row.username }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="动作" width="110" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.action === '登录账号修改' ? 'primary' : 'warning'" size="small">
+              {{ row.action || '密码修改' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="详情" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.detail">{{ row.detail }}</span>
+            <span v-else style="color:#c0c4cc;">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag
+              :type="row.status === '已通过' ? 'success' : (row.status === '已驳回' ? 'danger' : 'warning')"
+              size="small"
+            >
+              {{ row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="修改时间" width="150" align="center">
+          <template #default="{ row }">{{ fmtLogTime(row.requested_at) }}</template>
+        </el-table-column>
+        <el-table-column label="备注" min-width="130" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span :style="row.status === '已驳回' ? 'color:#f56c6c;' : ''">{{ row.remark || '—' }}</span>
+          </template>
+        </el-table-column>
+        <template #empty>暂无账户修改记录</template>
+      </el-table>
+      <template #footer>
+        <el-button @click="logDialogVisible = false">关 闭</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -162,7 +221,10 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
-import { listOperators, createOperator, updateOperator, deleteOperator } from '@/api/operators'
+import {
+  listOperators, createOperator, updateOperator, deleteOperator,
+  listAccountChangeLogs
+} from '@/api/operators'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
@@ -216,6 +278,31 @@ async function loadList() {
 function onSearch() {
   query.page = 1
   loadList()
+}
+
+/* ===== 账户修改记录（超级管理员只读查看） ===== */
+const logDialogVisible = ref(false)
+const logLoading = ref(false)
+const changeLogs = ref([])
+
+function fmtLogTime(t) {
+  return t ? String(t).slice(0, 19).replace('T', ' ') : '—'
+}
+
+async function loadChangeLogs() {
+  logLoading.value = true
+  try {
+    changeLogs.value = (await listAccountChangeLogs()) || []
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    logLoading.value = false
+  }
+}
+
+function openChangeLogs() {
+  logDialogVisible.value = true
+  loadChangeLogs()
 }
 
 function openCreate() {
@@ -274,7 +361,9 @@ async function onDelete(row) {
   loadList()
 }
 
-onMounted(loadList)
+onMounted(() => {
+  loadList()
+})
 </script>
 
 <style scoped>
