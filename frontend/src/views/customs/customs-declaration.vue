@@ -743,20 +743,31 @@ function mergeItems(savedItems, flat, kind, currency, rate, baseCurrency) {
     // ctn：saved 优先，否则用订单实时值（= qty / pcs_per_ctn）
     const savedCtn = savedMatch ? Number(savedMatch.ctn) : 0
     const initCtn = savedCtn > 0 ? savedCtn : (Number(g.ctn) || 0)
+    // 单价/总重/总体积：saved 优先（用户在编辑弹窗里改过），否则用订单实时值
+    const savedPrice = savedMatch ? Number(savedMatch.price) : 0
+    const savedNw = savedMatch ? Number(savedMatch.nw) : 0
+    const savedGw = savedMatch ? Number(savedMatch.gw) : 0
+    const savedCbm = savedMatch ? Number(savedMatch.cbm) : 0
     const row = {
       // 产品名称：saved 有值用 saved（用户在编辑弹窗里改过名），否则用订单实时值
       product: (savedMatch && savedMatch.product) ? savedMatch.product : g.product,
       unit: g.unit,
-      price: g.price,
+      price: savedPrice > 0 ? savedPrice : (Number(g.price) || 0),
       ctn: initCtn,
       _pcs: pickSnap('_pcs'), _nw: pickSnap('_nw'), _gw: pickSnap('_gw'),
-      _l: pickSnap('_l'), _w: pickSnap('_w'), _h: pickSnap('_h')
+      _l: pickSnap('_l'), _w: pickSnap('_w'), _h: pickSnap('_h'),
+      // 总净重/总毛重/总体积：saved 有值用 saved（用户在编辑弹窗里改过），否则用订单实时值
+      nw: savedNw > 0 ? savedNw : (Number(g.nw) || 0),
+      gw: savedGw > 0 ? savedGw : (Number(g.gw) || 0),
+      cbm: savedCbm > 0 ? savedCbm : (Number(g.cbm) || 0)
     }
     // _cbm 单独处理：saved 有值用 saved，否则用订单值；尺寸齐全时 recalc 会覆盖
-    const savedCbm = savedMatch ? Number(savedMatch._cbm) : 0
-    row._cbm = savedCbm > 0 ? savedCbm : (Number(g._cbm) || 0)
-    recalcCustMetrics(row)
-    row.total = Number((row.qty * row.price).toFixed(2))
+    const savedCbmPerCtn = savedMatch ? Number(savedMatch._cbm) : 0
+    row._cbm = savedCbmPerCtn > 0 ? savedCbmPerCtn : (Number(g._cbm) || 0)
+    // 总价 = 数量 × 单价（数量由 recalc 算出，单价上面已取 saved）
+    const qty = (Number(row.ctn) || 0) * (Number(row._pcs) || 0)
+    row.qty = qty
+    row.total = Number((qty * row.price).toFixed(2))
     return row
   })
 }
