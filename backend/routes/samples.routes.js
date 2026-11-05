@@ -193,7 +193,7 @@ router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const [[sample]] = await pool.query(
-      `SELECT s.*, c.name_en AS client_name, c.short_name AS client_short_name
+      `SELECT s.*, c.name_en AS client_name, c.short_name AS client_short_name, c.country AS country
        FROM samples_tracking s
        LEFT JOIN clients c ON s.client_id = c.id
        WHERE s.id = ?`,
@@ -376,16 +376,33 @@ router.put(
         if (oldHasDocs) {
           let oldPo = {};
           try { oldPo = typeof before.production_order === 'string' ? JSON.parse(before.production_order) : (before.production_order || {}); } catch {}
-          const preservePoKeys = ['item_extensions', 'product_config_data', 'product_config_types', 'plug_photos', 'remark_note', 'packaging_note', 'accessories_ids', 'po_number'];
+          // item_extensions 不再无条件保留——订单产品变更时必须重新生成；
+          // 但用户之前编辑过的 remark / img_url 按 product_id 合并保留
+          const newExts = docs.production_order.item_extensions || [];
+          const oldExtMap = new Map((oldPo.item_extensions || []).map(e => [Number(e.product_id), e]));
+          newExts.forEach(ne => {
+            const oldE = oldExtMap.get(Number(ne.product_id));
+            if (oldE) {
+              if (oldE.remark !== undefined) ne.remark = oldE.remark;
+              if (oldE.img_url !== undefined) ne.img_url = oldE.img_url;
+            }
+          });
+          docs.production_order.item_extensions = newExts;
+          const preservePoKeys = ['product_config_data', 'product_config_types', 'plug_photos', 'remark_note', 'packaging_note', 'accessories_ids', 'po_number'];
           for (const k of preservePoKeys) {
             if (oldPo[k] !== undefined && oldPo[k] !== null) docs.production_order[k] = oldPo[k];
           }
-          // 核心修复：旧单据已有 sub_orders（已归类）→ 保留旧分组结构（product_ids/supplier_id）
+          // 核心修复：旧单据已有 sub_orders（已归类），保留旧分组结构（supplier_id）
+          // 和用户编辑字段，但 product_ids 必须用最新生成的（订单产品可能变了）
           if (Array.isArray(oldPo.sub_orders) && oldPo.sub_orders.length > 0) {
-            docs.production_order.sub_orders = oldPo.sub_orders.map((oldSub, idx) => {
-              const newSub = (Array.isArray(docs.production_order.sub_orders) && docs.production_order.sub_orders[idx]) || {};
+            docs.production_order.sub_orders = docs.production_order.sub_orders.map((newSub, idx) => {
+              const oldSub = oldPo.sub_orders.find(s =>
+                (newSub.supplier_id != null && s.supplier_id === newSub.supplier_id)
+              ) || oldPo.sub_orders[idx] || {};
               return {
-                ...oldSub,
+                supplier_id: newSub.supplier_id,
+                supplier_name: newSub.supplier_name,
+                product_ids: newSub.product_ids,
                 po_number: oldSub.po_number || newSub.po_number || '',
                 sub_contract_no: oldSub.sub_contract_no || newSub.sub_contract_no || '',
                 tech_req: oldSub.tech_req || newSub.tech_req || '',
@@ -601,7 +618,7 @@ router.get(
     // 业务员(3)只读：不可下载采购订货单 Excel
     if (req.operator.permission_level === 3) return res.fail('业务员无权下载采购订货单 Excel', 403);
     const [[sample]] = await pool.query(
-      `SELECT s.*, COALESCE(NULLIF(c.short_name, ''), c.name_en) AS client_name
+      `SELECT s.*, COALESCE(NULLIF(c.short_name, ''), c.name_en) AS client_name, c.country AS country
        FROM samples_tracking s
        LEFT JOIN clients c ON s.client_id = c.id
        WHERE s.id = ?`,
@@ -764,7 +781,9 @@ router.get(
     ws.getCell(`A${14 + extra}`).style = mod2ContentStyle;
 
     // ===== 重建固定区合并 =====
-    rebuildPoMerges(ws, extra, hasPlugImg ? 7 : 8);
+    const photosForCalc = Array.isArray(src.plug_photos) ? src.plug_photos.filter(p => typeof p === 'string' && p.startsWith('data:image')) : [];
+    const photosRowCount = Math.max(1, Math.ceil(photosForCalc.length / 3));
+    rebuildPoMerges(ws, extra, hasPlugImg ? 7 : 8, photosRowCount);
     // ===== 重建明细行 F:G 合并 =====
     rebuildDetailMerges(ws, DETAIL_START, Math.max(detailRows.length, DETAIL_CAPACITY + extra));
 
@@ -819,28 +838,30 @@ router.get(
     packCell.value = (src.packaging_note && String(src.packaging_note).trim()) ? String(src.packaging_note).trim() : '无';
     packCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
 
-    // ===== 实物图片（A17+extra，靠左独占一行，每张 100x100；包装说明插入后由 15+extra 平移 2 行）=====
-    const photos = Array.isArray(src.plug_photos) ? src.plug_photos.filter(p => typeof p === 'string' && p.startsWith('data:image')) : [];
-    const photoRow = 17 + extra;
+    // ===== 实物图片（A17+extra 起，每行 3 张，多图自动换行，每张 100x100）=====
+    const photos = photosForCalc;
+    const photoStart = 17 + extra;
     for (let pi = 0; pi < photos.length; pi++) {
-      const dataUrl = photos[pi];
+      const rowIdx = Math.floor(pi / 3);
+      const colIdx = pi % 3;
+      const row = photoStart + rowIdx;
+      const col = colIdx * 2.7 + 0.05;
       try {
-        const ext = dataUrl.startsWith('data:image/png') ? 'png' : 'jpeg';
-        const base64 = dataUrl.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
+        const ext = photos[pi].startsWith('data:image/png') ? 'png' : 'jpeg';
+        const base64 = photos[pi].replace(/^data:image\/[a-zA-Z]+;base64,/, '');
         const imgId = wb.addImage({ base64, extension: ext });
         ws.addImage(imgId, {
-          tl: { col: 0 + pi * 0.135, row: (photoRow - 1) + 0.05 },
+          tl: { col, row: (row - 1) + 0.05 },
           ext: { width: 100, height: 100 },
           editAs: 'oneCell'
         });
+        ws.getRow(row).height = 80;
       } catch { /* 图片嵌入失败不阻断 */ }
     }
-    if (photos.length > 0) {
-      ws.getRow(photoRow).height = 80;
-    }
 
-    // ===== 备注（A18+extra）：写入模块3 备注 =====
-    ws.getCell(`A${18 + extra}`).value = src.remark_note || '无';
+    // ===== 备注（紧随实物图片区）：写入模块3 备注 =====
+    const remarkRow3 = photoStart + photosRowCount;
+    ws.getCell(`A${remarkRow3}`).value = src.remark_note || '无';
 
     // ===== 输出 .xlsx =====
     const fileSuffix = subOrder ? `-${subIndex + 1}` : '';

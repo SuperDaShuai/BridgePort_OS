@@ -633,21 +633,6 @@ watch(() => editForm.value.product_config_types, (newTypes, oldTypes) => {
   editForm.value.product_config_text = text
 }, { deep: true })
 
-// ===== 插头选择 watcher：自动在 product_config_text 里维护一个【插头型号】区块 =====
-watch(() => editForm.value.plug_accessory_id, (newId, oldId) => {
-  const cur = editForm.value.product_config_text || ''
-  // 先删掉旧的【插头型号】区块（从【插头型号】到下一个【开头或文末）
-  let text = cur.replace(/【插头型号】[\s\S]*?(?=\n\n【|$)/, '').trim()
-  if (newId) {
-    const acc = accNameMap.value.get(newId)
-    if (acc) {
-      const block = `【插头型号】\n${acc.name}${acc.specs ? ' / ' + acc.specs : ''}`
-      text = text ? text + '\n\n' + block : block
-    }
-  }
-  editForm.value.product_config_text = text
-})
-
 // 生成带【类型】标题的配置模板（每个类型一个区块，区块间空行分隔，多类型时分隔清晰）
 function buildConfigTemplateText(selectedTypes) {
   const typeMap = new Map(productConfigTypes.value.map(t => [t.product_type, t]))
@@ -1073,11 +1058,12 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
   return `
     <div style="text-align:center; font-size:22pt; font-weight:900; letter-spacing:16px; padding:16px 0; color:#1a1a1a;">采 购 订 货 单</div>
 
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0; font-size:11px; border:${BORDER};">
-      <div style="padding:8px 10px; border-right:${BORDER};"><strong>客户名称：</strong>${order.client_short_name || order.client_name || ''}</div>
-      <div style="padding:8px 10px;"><strong>制单人：</strong>${userStore.displayName}</div>
-      <div style="padding:8px 10px; border-right:${BORDER}; border-top:${BORDER};"><strong>下单日期：</strong>${orderDate}</div>
-      <div style="padding:8px 10px; border-top:${BORDER};"><strong>交货日期：</strong>${(order.delivery_date || '').slice(0, 10) || ''}</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0; font-size:11px;">
+      <div style="padding:4px 0;"><strong>客户名称：</strong>${[(order.client_country || order.country), (order.client_short_name || order.client_name || '')].filter(Boolean).join(' ')}</div>
+      <div style="padding:4px 0;"><strong>制单人：</strong>${userStore.displayName}</div>
+      <div style="padding:4px 0;"><strong>采购单号：</strong>${po.po_number || po.po_no || ''}</div>
+      <div style="padding:4px 0;"><strong>下单日期：</strong>${orderDate}</div>
+      <div style="padding:4px 0;"><strong>交货日期：</strong>${(order.delivery_date || '').slice(0, 10) || ''}</div>
     </div>
 
     <div style="margin-top:10px; border:${BORDER};">

@@ -219,7 +219,7 @@ router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const [[order]] = await pool.query(
-      `SELECT o.*, c.name_en AS client_name, c.short_name AS client_short_name, s.name AS supplier_name
+      `SELECT o.*, c.name_en AS client_name, c.short_name AS client_short_name, c.country AS client_country, s.name AS supplier_name
        FROM orders o
        LEFT JOIN clients c ON o.client_id = c.id
        LEFT JOIN suppliers s ON o.supplier_id = s.id
@@ -333,7 +333,7 @@ router.get(
     // 业务员(3)只读：不可下载采购订货单 Excel
     if (req.operator.permission_level === 3) return res.fail('业务员无权下载采购订货单 Excel', 403);
     const [[order]] = await pool.query(
-      `SELECT o.*, COALESCE(NULLIF(c.short_name, ''), c.name_en) AS client_name, s.name AS supplier_name
+      `SELECT o.*, COALESCE(NULLIF(c.short_name, ''), c.name_en) AS client_name, c.country AS client_country, s.name AS supplier_name
        FROM orders o
        LEFT JOIN clients c ON o.client_id = c.id
        LEFT JOIN suppliers s ON o.supplier_id = s.id
@@ -497,7 +497,10 @@ router.get(
     ws.getCell(`A${14 + extra}`).style = mod2ContentStyle;
 
     // ===== 重建固定区合并（插行后原合并下移但 _merges 不动）=====
-    rebuildPoMerges(ws, extra, hasPlugImg ? 7 : 8);
+    // 实物图片区：每行 3 张图，自动换行行数 photosRowCount
+    const photosForCalc = Array.isArray(src.plug_photos) ? src.plug_photos.filter(p => typeof p === 'string' && p.startsWith('data:image')) : [];
+    const photosRowCount = Math.max(1, Math.ceil(photosForCalc.length / 3));
+    rebuildPoMerges(ws, extra, hasPlugImg ? 7 : 8, photosRowCount);
     // ===== 重建明细行 F:G 合并 =====
     rebuildDetailMerges(ws, DETAIL_START, Math.max(detailRows.length, DETAIL_CAPACITY + extra));
 
@@ -554,28 +557,31 @@ router.get(
     packCell.value = (src.packaging_note && String(src.packaging_note).trim()) ? String(src.packaging_note).trim() : '无';
     packCell.alignment = { vertical: 'top', horizontal: 'left', wrapText: true };
 
-    // ===== 实物图片（A17+extra，靠左独占一行，每张 100x100；包装说明插入后由 15+extra 平移 2 行）=====
-    const photos = Array.isArray(src.plug_photos) ? src.plug_photos.filter(p => typeof p === 'string' && p.startsWith('data:image')) : [];
-    const photoRow = 17 + extra;
+    // ===== 实物图片（A17+extra 起，每行 3 张，多图自动换行，每张 100x100）=====
+    const photos = photosForCalc;
+    const photoStart = 17 + extra;
     for (let pi = 0; pi < photos.length; pi++) {
-      const dataUrl = photos[pi];
+      const rowIdx = Math.floor(pi / 3);        // 第几行（0-based）
+      const colIdx = pi % 3;                    // 行内第几列（0,1,2）
+      const row = photoStart + rowIdx;
+      // 3 列均分 A:H（8 列宽）：0→col 0.05, 1→col 2.75, 2→col 5.45（列宽约 2.6，留 0.15 间距）
+      const col = colIdx * 2.7 + 0.05;
       try {
-        const ext = dataUrl.startsWith('data:image/png') ? 'png' : 'jpeg';
-        const base64 = dataUrl.replace(/^data:image\/[a-zA-Z]+;base64,/, '');
+        const ext = photos[pi].startsWith('data:image/png') ? 'png' : 'jpeg';
+        const base64 = photos[pi].replace(/^data:image\/[a-zA-Z]+;base64,/, '');
         const imgId = wb.addImage({ base64, extension: ext });
         ws.addImage(imgId, {
-          tl: { col: 0 + pi * 0.135, row: (photoRow - 1) + 0.05 },
+          tl: { col, row: (row - 1) + 0.05 },
           ext: { width: 100, height: 100 },
           editAs: 'oneCell'
         });
+        ws.getRow(row).height = 80;
       } catch { /* 图片嵌入失败不阻断 */ }
     }
-    if (photos.length > 0) {
-      ws.getRow(photoRow).height = 80;
-    }
 
-    // ===== 备注（A18+extra）：写入模块3 备注 =====
-    ws.getCell(`A${18 + extra}`).value = src.remark_note || '无';
+    // ===== 备注（紧随实物图片区）：写入模块3 备注 =====
+    const remarkRow3 = photoStart + photosRowCount;
+    ws.getCell(`A${remarkRow3}`).value = src.remark_note || '无';
 
     // ===== 输出 .xlsx =====
     const fileSuffix = subOrder ? `-${subIndex + 1}` : '';
@@ -802,26 +808,45 @@ router.put(
         if (!docsMissing) {
           let oldPo = {};
           try { oldPo = typeof oldRow.production_order === 'string' ? JSON.parse(oldRow.production_order) : (oldRow.production_order || {}); } catch {}
-          const preservePoKeys = ['item_extensions', 'product_config_data', 'product_config_types', 'plug_photos', 'remark_note', 'packaging_note', 'accessories_ids', 'po_number'];
+          // item_extensions 不再无条件保留——订单产品变更时必须重新生成；
+          // 但用户之前在 item_extensions 里编辑过的 remark / img_url 按 product_id 合并保留
+          const newExts = docs.production_order.item_extensions || [];
+          const oldExtMap = new Map((oldPo.item_extensions || []).map(e => [Number(e.product_id), e]));
+          newExts.forEach(ne => {
+            const oldE = oldExtMap.get(Number(ne.product_id));
+            if (oldE) {
+              // 只保留用户可能手动编辑过的字段（remark / img_url），其余用新生成的
+              if (oldE.remark !== undefined) ne.remark = oldE.remark;
+              if (oldE.img_url !== undefined) ne.img_url = oldE.img_url;
+            }
+          });
+          docs.production_order.item_extensions = newExts;
+          // 其他顶层字段正常保留
+          const preservePoKeys = ['product_config_data', 'product_config_types', 'plug_photos', 'remark_note', 'packaging_note', 'accessories_ids', 'po_number'];
           for (const k of preservePoKeys) {
             if (oldPo[k] !== undefined && oldPo[k] !== null) docs.production_order[k] = oldPo[k];
           }
-          // 核心修复：如果旧单据已有 sub_orders（已归类），保留旧分组结构（product_ids/supplier_id）
-          // 只更新编号和独立字段，不重新 groupBySupplier——防止产品因 supplier_id 变化跳槽
+          // 核心修复：如果旧单据已有 sub_orders（已归类），保留旧分组结构（supplier_id）
+          // 和用户编辑字段（编号/备注/tech_req/mark_req），但 product_ids 必须用最新生成的
+          // —— 因为订单产品可能新增/删除/修改了，旧 product_ids 会导致生产任务单看不到变化
           if (Array.isArray(oldPo.sub_orders) && oldPo.sub_orders.length > 0) {
-            docs.production_order.sub_orders = oldPo.sub_orders.map((oldSub, idx) => {
-              const newSub = (Array.isArray(docs.production_order.sub_orders) && docs.production_order.sub_orders[idx]) || {};
-              // 保留旧分组结构，更新编号（如果需要递增）和独立字段
+            // 先尝试按 supplier_id 匹配（可能数量或顺序变了），找不到就按索引
+            docs.production_order.sub_orders = docs.production_order.sub_orders.map((newSub, idx) => {
+              const oldSub = oldPo.sub_orders.find(s =>
+                (newSub.supplier_id != null && s.supplier_id === newSub.supplier_id)
+              ) || oldPo.sub_orders[idx] || {};
               return {
-                ...oldSub,
-                // 允许新生成的编号覆盖（如果旧编号为空）
+                supplier_id: newSub.supplier_id,
+                supplier_name: newSub.supplier_name,
+                product_ids: newSub.product_ids,   // ← 关键：用新生成的 product_ids（订单最新产品）
                 po_number: oldSub.po_number || newSub.po_number || '',
                 sub_contract_no: oldSub.sub_contract_no || newSub.sub_contract_no || '',
-                // 独立字段优先保留旧值
                 tech_req: oldSub.tech_req || newSub.tech_req || '',
                 mark_req: oldSub.mark_req || newSub.mark_req || ''
               };
             });
+            // 如果旧 sub_orders 比新生成的多（删除了供应商），跳过多余的
+            // 如果旧 sub_orders 比新生成的少（新增了供应商），上面 map 已经处理
           } else if (Array.isArray(oldPo.sub_orders) && Array.isArray(docs.production_order.sub_orders)) {
             // 旧单据无 sub_orders，新生成的有 → 正常用新生成的分组
             docs.production_order.sub_orders.forEach(newSub => {

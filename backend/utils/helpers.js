@@ -96,29 +96,17 @@ function clearUnusedDetailRows(ws, detailStart, usedRows, totalRows) {
 
 /* ================== 采购订货单 Excel：重建固定区合并单元格 ==================
    新模板固定区合并（行号在插行后整体下移 extra 行）：
-   - 统一采购备注标题: A11:H11 → A(11+ext):H(11+ext)
-   - 统一采购备注内容: A12:H12 → A(12+ext):H(12+ext)
-   - 其他备注标题: A14:H14 → A(14+ext):H(14+ext)
-   - 实物图片区: A15:H15 → A(15+ext):H(15+ext)
-   - 备注内容: A16:H16 → A(16+ext):H(16+ext)
-   insertRow 只下移单元格值不移动 _merges，必须先删陈旧合并再重建。
-   无论 extra 是否为 0，重建后都重新画边框（模板可能本身没画边框）。 */
-function rebuildPoMerges(ws, extra, contentEndCol = 8) {
-  /* 固定区行布局（extra=明细超行数；包装说明模块固定插入 2 行，模块三及以下平移 +2）：
-     A(11+e):  模块二标题 ■ 统一采购备注      A:H
-     A(12+e):  模块二内容                     A:G（有插头图）或 A:H
-     A(13+e):  包装说明标题                   A:H（代码插入）
-     A(14+e):  包装说明内容                   A:H（代码插入）
-     A(15+e):  空行（原模板 Row13 平移，不合并）
-     A(16+e):  模块三标题                     A:H
-     A(17+e):  实物图片区                     A:H
-     A(18+e):  备注内容                       A:H
-     insertRow 只下移单元格值不移动 _merges，必须先删陈旧合并再重建。
-     无论 extra 是否为 0，重建后都重新画边框（模板可能本身没画边框）。 */
+   - 实物图片区多行：17+extra 起，每行 3 张图，共 photosRowCount 行
+   insertRow 只下移单元格值不移动 _merges，必须先删陈旧合并再重建。 */
+function rebuildPoMerges(ws, extra, contentEndCol = 8, photosRowCount = 1) {
+  /* 固定区行布局：包装说明模块固定插入 2 行，模块三及以下平移 +2
+     实物图片区 17+e 起占 photosRowCount 行（每行 3 张图），备注紧随其后。 */
   const e = extra;
-
-  // 清除陈旧合并：模板原始行(11-16)、明细插行平移位、包装插行平移位，全量清理最稳
-  for (let r = 11; r <= 18 + e; r++) {
+  const photoStart = 17 + e;
+  const photoEnd = photoStart + photosRowCount - 1;
+  const remarkRow = photoEnd + 1;
+  // 清除陈旧合并：原始行 11 到 remarkRow（含所有可能的图片行）
+  for (let r = 11; r <= remarkRow + 1; r++) {
     const stale = [];
     for (const [master, m] of Object.entries(ws._merges || {})) {
       const top = m && m.top !== undefined ? m.top : parseInt(String(master).replace(/\D/g, ''), 10);
@@ -131,16 +119,15 @@ function rebuildPoMerges(ws, extra, contentEndCol = 8) {
   }
 
   // 重建合并 + 画边框
-  // contentEndCol: 模块二内容行的合并结束列；有插头图时传 7（A:G），右侧 H 列留给插头图+红底标签
   const colLetter = n => String.fromCharCode(64 + n);
   const ranges = [
-    [11 + e, 11 + e, 8],              // 模块二标题（A:H）
-    [12 + e, 12 + e, contentEndCol],  // 模块二内容（A:G 或 A:H）
-    [13 + e, 13 + e, 8],              // 包装说明标题（A:H）
-    [14 + e, 14 + e, 8],              // 包装说明内容（A:H）
-    [16 + e, 16 + e, 8],              // 模块三标题（A:H，+2 平移）
-    [17 + e, 17 + e, 8],              // 实物图片区（A:H，+2 平移）
-    [18 + e, 18 + e, 8],              // 备注内容（A:H，+2 平移）
+    [11 + e, 11 + e, 8],                    // 模块二标题
+    [12 + e, 12 + e, contentEndCol],        // 模块二内容
+    [13 + e, 13 + e, 8],                    // 包装说明标题
+    [14 + e, 14 + e, 8],                    // 包装说明内容
+    [16 + e, 16 + e, 8],                    // 模块三标题
+    [photoStart, photoEnd, 8],              // 实物图片区（多行）
+    [remarkRow, remarkRow, 8],              // 备注内容（紧随图片区）
   ];
   for (const [top, bottom, endCol] of ranges) {
     ws.mergeCells(`A${top}:${colLetter(endCol)}${bottom}`);
