@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<template>
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<template>
   <el-card shadow="never" class="page-card">
     <!-- 页面标题（仿参考项目） -->
     <div class="page-header">
@@ -13,24 +13,30 @@
           <strong style="color: #2563eb; font-size: 15px;">{{ row.pi_number }}</strong>
         </template>
       </el-table-column>
-      <el-table-column label="申报海关口岸" min-width="220">
+      <el-table-column label="申报海关口岸" width="180">
         <template #default="{ row }">
           {{ exitPortText(row) }}
         </template>
+      </el-table-column>
+      <el-table-column label="预计离港时间" width="120" align="center">
+        <template #default="{ row }">{{ customsMeta(row, 'etd') }}</template>
+      </el-table-column>
+      <el-table-column label="预计到港时间" width="120" align="center">
+        <template #default="{ row }">{{ customsMeta(row, 'eta') }}</template>
       </el-table-column>
       <el-table-column label="Declaration Draft" width="180" align="center">
         <template #default="{ row }">
           <el-button size="small" @click="openPreview(row, 'decl')">Declaration Draft</el-button>
         </template>
       </el-table-column>
-      <el-table-column label="Commercial Invoice" width="190" align="center">
-        <template #default="{ row }">
-          <el-button size="small" @click="openPreview(row, 'ci')">Commercial Invoice</el-button>
-        </template>
-      </el-table-column>
       <el-table-column label="Sales Contract" width="170" align="center">
         <template #default="{ row }">
           <el-button size="small" @click="openPreview(row, 'sc')">Sales Contract</el-button>
+        </template>
+      </el-table-column>
+      <el-table-column label="Commercial Invoice" width="190" align="center">
+        <template #default="{ row }">
+          <el-button size="small" @click="openPreview(row, 'ci')">Commercial Invoice</el-button>
         </template>
       </el-table-column>
       <el-table-column label="Packing List" width="160" align="center">
@@ -220,7 +226,7 @@
     <el-dialog
       v-model="custEditVisible" :close-on-click-modal="false"
       title="编辑外销与清关单据 (Sales Contract / Invoice / Packing List)"
-      width="1150px"
+      width="1500px"
       destroy-on-close
       top="3vh"
     >
@@ -240,6 +246,9 @@
 
           <el-col :span="6"><el-form-item label="出运港 (Loading Port)"><el-input v-model="custForm.loading_port" placeholder="如：SHANGHAI" /></el-form-item></el-col>
           <el-col :span="6"><el-form-item label="目的港 (Discharge Port)"><el-input v-model="custForm.dest_port" placeholder="如：Manila" /></el-form-item></el-col>
+
+          <el-col :span="6"><el-form-item label="预计离港时间 (ETD)"><el-date-picker v-model="custForm.etd" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item></el-col>
+          <el-col :span="6"><el-form-item label="预计到港时间 (ETA)"><el-date-picker v-model="custForm.eta" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item></el-col>
         </el-row>
         <el-row :gutter="16">
           <el-col :span="24"><el-form-item label="全局唛头 (Shipping Mark)"><el-input v-model="custForm.shipping_mark" type="textarea" :rows="2" placeholder="支持多行换行，自动关联订单的 Shipping Mark" /></el-form-item></el-col>
@@ -258,20 +267,42 @@
             <el-table-column label="产品名称 (Product / Description)" min-width="220">
               <template #default="{ row }"><el-input v-model="row.product" size="small" type="textarea" :autosize="{ minRows: 1 }" /></template>
             </el-table-column>
-            <el-table-column label="数量 (pcs)" width="100">
-              <template #default="{ row }"><el-input-number v-model="row.qty" :min="0" :controls="false" size="small" style="width:100%" @change="calcCustRow(row)" /></template>
+            <el-table-column label="数量 (pcs)" width="90">
+              <template #default="{ row }"><el-input-number v-model="row.qty" :min="0" :controls="false" size="small" style="width:100%" :disabled="true" /></template>
             </el-table-column>
-            <el-table-column label="Master CTN" width="90">
-              <template #default="{ row }"><el-input-number v-model="row.ctn" :min="0" :controls="false" size="small" style="width:100%" /></template>
+            <el-table-column label="箱数 CTN" width="80">
+              <template #default="{ row }"><el-input-number v-model="row.ctn" :min="0" :controls="false" size="small" style="width:100%" @change="calcCustRow(row)" /></template>
             </el-table-column>
-            <el-table-column label="N.W. (KG)" width="100">
-              <template #default="{ row }"><el-input-number v-model="row.nw" :min="0" :precision="1" :controls="false" size="small" style="width:100%" /></template>
+            <el-table-column label="件数/箱" width="80">
+              <template #default="{ row }"><el-input-number v-model="row._pcs" :min="0" :controls="false" size="small" style="width:100%" @change="calcCustRow(row)" /></template>
             </el-table-column>
-            <el-table-column label="G.W. (KG)" width="100">
-              <template #default="{ row }"><el-input-number v-model="row.gw" :min="0" :precision="1" :controls="false" size="small" style="width:100%" /></template>
+            <el-table-column label="纸箱尺寸 (cm)" align="center">
+              <el-table-column label="L" width="70">
+                <template #default="{ row }"><el-input-number v-model="row._l" :min="0" :precision="1" :controls="false" size="small" style="width:100%" @change="recalcCustMetrics(row)" /></template>
+              </el-table-column>
+              <el-table-column label="W" width="70">
+                <template #default="{ row }"><el-input-number v-model="row._w" :min="0" :precision="1" :controls="false" size="small" style="width:100%" @change="recalcCustMetrics(row)" /></template>
+              </el-table-column>
+              <el-table-column label="H" width="70">
+                <template #default="{ row }"><el-input-number v-model="row._h" :min="0" :precision="1" :controls="false" size="small" style="width:100%" @change="recalcCustMetrics(row)" /></template>
+              </el-table-column>
             </el-table-column>
-            <el-table-column label="CBM" width="100">
-              <template #default="{ row }"><el-input-number v-model="row.cbm" :min="0" :precision="3" :step="0.001" :controls="false" size="small" style="width:100%" /></template>
+            <el-table-column label="单箱重量 (KG)" align="center">
+              <el-table-column label="N.W." width="80">
+                <template #default="{ row }"><el-input-number v-model="row._nw" :min="0" :precision="2" :controls="false" size="small" style="width:100%" @change="recalcCustMetrics(row)" /></template>
+              </el-table-column>
+              <el-table-column label="G.W." width="80">
+                <template #default="{ row }"><el-input-number v-model="row._gw" :min="0" :precision="2" :controls="false" size="small" style="width:100%" @change="recalcCustMetrics(row)" /></template>
+              </el-table-column>
+            </el-table-column>
+            <el-table-column label="总N.W. (KG)" width="95">
+              <template #default="{ row }"><el-input-number v-model="row.nw" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template>
+            </el-table-column>
+            <el-table-column label="总G.W. (KG)" width="95">
+              <template #default="{ row }"><el-input-number v-model="row.gw" :min="0" :precision="2" :controls="false" size="small" style="width:100%" /></template>
+            </el-table-column>
+            <el-table-column label="CBM" width="90">
+              <template #default="{ row }"><el-input-number v-model="row.cbm" :min="0" :precision="3" :step="0.001" :controls="false" size="small" style="width:100%" :disabled="true" /></template>
             </el-table-column>
             <el-table-column :label="`单价 (${custForm.currency === 'RMB' ? '¥' : '$'})`" width="110">
               <template #default="{ row }"><el-input-number v-model="row.price" :min="0" :precision="2" :controls="false" size="small" style="width:100%" @change="calcCustRow(row)" /></template>
@@ -284,10 +315,13 @@
             </el-table-column>
           </el-table>
 
-          <!-- 订单实时汇总：仅总毛重/总净重/总金额，靠右显示 -->
+          <!-- 订单实时汇总 -->
           <div class="order-summary-bar">
-            <span>总毛重 <b>{{ totals.gw || 0 }} kg</b></span>
-            <span>总净重 <b>{{ totals.nw || 0 }} kg</b></span>
+            <span>总数量 <b>{{ totals.qty || 0 }} pcs</b></span>
+            <span>总箱数 <b>{{ totals.ctn || 0 }} CTN</b></span>
+            <span>总CBM <b>{{ (totals.cbm || 0).toFixed(3) }}</b></span>
+            <span>总毛重 <b>{{ (totals.gw || 0).toFixed(1) }} kg</b></span>
+            <span>总净重 <b>{{ (totals.nw || 0).toFixed(1) }} kg</b></span>
             <span>总金额 <b>{{ custForm.currency === 'RMB' ? '¥' : '$' }}{{ formatMoney(totals.amount || 0) }}</b></span>
           </div>
         </div>
@@ -399,7 +433,12 @@ function flatItemsFromOrder(items, kind, currency, fromCurrency, rate, destCount
     const pcsPerCtn = Number(it.pcs_per_ctn) || 0
     const nwPerCtn = Number(it.nw_per_ctn || 0)
     const gwPerCtn = Number(it.gw_per_ctn || 0)
-    const cbmPerCtn = Number(it.cbm_per_ctn || 0)
+    // 单箱体积缺失但纸箱尺寸齐全时，由尺寸推算（cm³ → m³）
+    let cbmPerCtn = Number(it.cbm_per_ctn || 0)
+    const dimL = Number(it.ctn_length || 0), dimW = Number(it.ctn_width || 0), dimH = Number(it.ctn_height || 0)
+    if (!cbmPerCtn && dimL > 0 && dimW > 0 && dimH > 0) {
+      cbmPerCtn = Number((dimL * dimW * dimH / 1000000).toFixed(4))
+    }
     const ctns = pcsPerCtn > 0 ? qty / pcsPerCtn : 0
     const hsCode = it.hs_code || it.product_hs_code || ''
     const model = it.model || it.supplier_model || it.product_our_model || ''
@@ -415,7 +454,11 @@ function flatItemsFromOrder(items, kind, currency, fromCurrency, rate, destCount
     const total = convertPrice(qty * priceRaw, fromCurrency, currency, rate)
 
     // 每箱快照（下划线前缀，calcCustRow/calcDeclRow 里用来按 qty 重算）
-    const perCtn = { _pcs: pcsPerCtn, _nw: nwPerCtn, _gw: gwPerCtn, _cbm: cbmPerCtn }
+    // _l/_w/_h：单个纸箱尺寸 cm；齐全时单箱体积由尺寸推算
+    const perCtn = {
+      _pcs: pcsPerCtn, _nw: nwPerCtn, _gw: gwPerCtn, _cbm: cbmPerCtn,
+      _l: Number(it.ctn_length || 0), _w: Number(it.ctn_width || 0), _h: Number(it.ctn_height || 0)
+    }
 
     if (kind === 'decl') {
       // 报关单商品品名 = HS编码库的申报品名（product_name），这是海关认定的标准品名
@@ -451,6 +494,12 @@ function exitPortText(row) {
   const dd = parseDoc(row.decl_data)
   const port = (dd && dd.exit_customs) || (row.loading_port ? row.loading_port + ' 海关' : '—')
   return `${port} | ${row.trade_terms || '—'}`
+}
+
+// 清关外销单据里保存的附加字段（ETD/ETA 等）
+function customsMeta(row, key) {
+  const d = parseDoc(row.customs_data)
+  return (d && d[key]) || '—'
 }
 
 async function loadList() {
@@ -495,6 +544,8 @@ async function getOrderDocs(row) {
   const customs = savedCustoms ? {
     ...savedCustoms,
     currency: savedCustoms.currency || baseCurrency,
+    etd: savedCustoms.etd || '',
+    eta: savedCustoms.eta || '',
     items: mergeItems(savedCustoms.items, flatCust, 'customs', targetCurrency, usdRate, baseCurrency)
   } : {
     client_id: detail.client_id,
@@ -507,6 +558,8 @@ async function getOrderDocs(row) {
     loading_time: detail.delivery_date || '',
     loading_port: (detail.loading_port || '').toUpperCase(),
     dest_port: detail.destination_port || '',
+    etd: '',
+    eta: '',
     shipping_method: 'By sea',
     shipping_mark: detail.shipping_mark && String(detail.shipping_mark).trim() ? String(detail.shipping_mark).trim() : 'N/M',
     total_amount_en: '',
@@ -612,11 +665,26 @@ async function getOrderDocs(row) {
 
 /**
  * 合并 items：以实时 flat 为基准（永远以外销订单为准），
- * 数值字段（qty/ctn/nw/gw/cbm/price/total）永远用 flat 值（后端 normalizeItems 已回填产品库快照），
- * saved JSON 里的旧值一律忽略——因为订单改了保存后 JSON 不会同步更新。
- * saved 里只保留非数值字段（hs_code/name/unit/elements/origin_country 等用户手动编辑的内容）。
- * custItems 参数也不再需要（decl 分支直接用 flatDecl 的数值）。
+ * qty/price/total 永远用 flat 值（后端 normalizeItems 已回填产品库快照）。
+ * customs 分支例外：每箱装箱参数（_pcs/_nw/_gw/_cbm/_l/_w/_h）优先用 saved 值
+ * （用户可能在清关编辑弹窗里按实际装箱调整过），ctn/nw/gw/cbm 由 qty+快照重算。
  */
+/* 按每箱快照重算一行的 数量/总净重/总毛重/总体积
+   规则：箱数 (ctn) 是主输入（用户填"我订了多少箱"），
+   数量 = 箱数 × 件数/箱；总量 = 箱数 × 单箱值；
+   纸箱 L/W/H 齐全时，单箱体积由尺寸推算（cm³ → m³） */
+function recalcCustMetrics(row) {
+  const ctns = Number(row.ctn) || 0
+  const pcs = Number(row._pcs) || 0
+  const qty = ctns * pcs
+  const l = Number(row._l) || 0, w = Number(row._w) || 0, h = Number(row._h) || 0
+  if (l > 0 && w > 0 && h > 0) row._cbm = Number((l * w * h / 1000000).toFixed(4))
+  row.qty = Number(qty.toFixed(0))
+  row.nw  = Number((ctns * (Number(row._nw) || 0)).toFixed(2))
+  row.gw  = Number((ctns * (Number(row._gw) || 0)).toFixed(2))
+  row.cbm = Number((ctns * (Number(row._cbm) || 0)).toFixed(3))
+}
+
 function mergeItems(savedItems, flat, kind, currency, rate, baseCurrency) {
   const saved = Array.isArray(savedItems) ? savedItems : []
 
@@ -665,20 +733,31 @@ function mergeItems(savedItems, flat, kind, currency, rate, baseCurrency) {
     }
 
     // customs 分支（清关外销自己的 merge）：
-    // 所有推导字段（product/unit/数值）永远以订单实时值为准，
-    // custForm 编辑弹窗里 product 只是让用户调整措辞，但订单才是权威源。
-    if (!savedMatch) {
-      return { product: g.product, qty: g.qty, ctn: g.ctn, nw: g.nw, gw: g.gw, cbm: g.cbm, price: g.price, total: g.total, unit: g.unit, ...perCtn }
+    // ctn 是主输入字段——saved 优先（用户可能在编辑弹窗调过实际装箱箱数），没有就用订单实时值；
+    // 每箱装箱参数（_pcs/_nw/_gw/_l/_w/_h）也优先用 saved 值；
+    // qty/nw/gw/cbm 是派生值，由 recalcCustMetrics 用 ctn × 快照算出来。
+    const pickSnap = (k) => {
+      const sv = savedMatch ? Number(savedMatch[k]) : 0
+      return sv > 0 ? sv : (Number(g[k]) || 0)
     }
-    return {
-      // product / unit 也是订单推导值，永远实时
-      product: g.product,
+    // ctn：saved 优先，否则用订单实时值（= qty / pcs_per_ctn）
+    const savedCtn = savedMatch ? Number(savedMatch.ctn) : 0
+    const initCtn = savedCtn > 0 ? savedCtn : (Number(g.ctn) || 0)
+    const row = {
+      // 产品名称：saved 有值用 saved（用户在编辑弹窗里改过名），否则用订单实时值
+      product: (savedMatch && savedMatch.product) ? savedMatch.product : g.product,
       unit: g.unit,
-      // 数值全部实时（订单权威数据）
-      qty: g.qty, ctn: g.ctn, nw: g.nw, gw: g.gw, cbm: g.cbm,
-      price: g.price, total: g.total,
-      ...perCtn
+      price: g.price,
+      ctn: initCtn,
+      _pcs: pickSnap('_pcs'), _nw: pickSnap('_nw'), _gw: pickSnap('_gw'),
+      _l: pickSnap('_l'), _w: pickSnap('_w'), _h: pickSnap('_h')
     }
+    // _cbm 单独处理：saved 有值用 saved，否则用订单值；尺寸齐全时 recalc 会覆盖
+    const savedCbm = savedMatch ? Number(savedMatch._cbm) : 0
+    row._cbm = savedCbm > 0 ? savedCbm : (Number(g._cbm) || 0)
+    recalcCustMetrics(row)
+    row.total = Number((row.qty * row.price).toFixed(2))
+    return row
   })
 }
 
@@ -769,18 +848,12 @@ function openCustomsEditFromPreview() {
   openCustomsEdit({ id: currentOrder.value.detail.id })
 }
 function addCustRow() {
-  custForm.value.items.push({ product: '', qty: 0, ctn: 0, nw: 0, gw: 0, cbm: 0, shipping_mark: 'N/M', price: 0, total: 0, _pcs: 0, _nw: 0, _gw: 0, _cbm: 0 })
+  custForm.value.items.push({ product: '', qty: 0, ctn: 0, nw: 0, gw: 0, cbm: 0, shipping_mark: 'N/M', price: 0, total: 0, _pcs: 0, _nw: 0, _gw: 0, _cbm: 0, _l: 0, _w: 0, _h: 0 })
 }
 function calcCustRow(row) {
-  const qty = Number(row.qty) || 0
-  row.total = Number((qty * (Number(row.price) || 0)).toFixed(2))
-  // 按每箱快照重算 ctn / nw / gw / cbm
-  const pcs = Number(row._pcs) || 0
-  const ctns = pcs > 0 ? qty / pcs : 0
-  row.ctn = Number(ctns.toFixed(2))
-  row.nw = Number((ctns * (Number(row._nw) || 0)).toFixed(2))
-  row.gw = Number((ctns * (Number(row._gw) || 0)).toFixed(2))
-  row.cbm = Number((ctns * (Number(row._cbm) || 0)).toFixed(3))
+  // 先按箱数重算数量/总重/体积（qty 是派生值），再算总金额
+  recalcCustMetrics(row)
+  row.total = Number((row.qty * (Number(row.price) || 0)).toFixed(2))
 }
 async function saveCust() {
   saving.value = true
@@ -867,7 +940,10 @@ function sealBlock(company) {
 function buildCiHtml(docs) {
   const { company, client, customs, detail } = docs
   const t = custTotals(customs)
-  const buyerAddr = [client.address_en || client.address || '', client.country || ''].filter(Boolean).join('<br>')
+  const buyerAddr = client.address_en || client.address || ''
+  // S/C NO. = 外销订单编码（与 Sales Contract 一致）；INVOICE No. = S/C NO. + "IN"
+  const scNo = detail.pi_number || ''
+  const invNo = scNo ? `${scNo}IN` : ''
   const rows = (customs.items || []).map((it, i) => `
     <tr>
       <td class="ctr">${i + 1}</td>
@@ -882,8 +958,11 @@ function buildCiHtml(docs) {
       ${docHead(company, 'COMMERCIAL INVOICE')}
       <table class="info">
         <tr>
-          <td style="width:60%;"><strong>BUYER:</strong><br><strong>${client.name_en || client.name || ''}</strong><br>${buyerAddr}</td>
-          <td><strong>INVOICE No.:</strong> ${customs.inv_no || ''}<br><strong>Date:</strong> ${customs.date || ''}<br><strong>Payment term:</strong> ${customs.payment_terms || 'T/T'}</td>
+          <td style="width:60%;" rowspan="2"><strong>BUYER:</strong><br><strong>${client.name_en || client.name || ''}</strong>${buyerAddr ? `<br>${buyerAddr}` : ''}</td>
+          <td><strong>S/C NO.:</strong> ${scNo}<br><strong>INVOICE No.:</strong> ${invNo}<br><strong>Date:</strong> ${customs.date || ''}<br><strong>Payment term:</strong> ${customs.payment_terms || 'T/T'}</td>
+        </tr>
+        <tr>
+          <td><strong>Shipment:</strong> ${customs.shipping_method || 'By sea'}<br><strong>Shipping port:</strong> ${customs.loading_port || ''}<br><strong>Discharging port:</strong> ${customs.dest_port || ''}</td>
         </tr>
       </table>
       <table class="goods">
@@ -907,7 +986,7 @@ function buildCiHtml(docs) {
 function buildScHtml(docs) {
   const { company, client, customs, detail } = docs
   const t = custTotals(customs)
-  const buyerAddr = [client.address_en || client.address || '', client.country || ''].filter(Boolean).join('<br>')
+  const buyerAddr = client.address_en || client.address || ''
   const rows = (customs.items || []).map((it, i) => `
     <tr>
       <td class="ctr">${i + 1}</td>
@@ -926,12 +1005,11 @@ function buildScHtml(docs) {
       ${docHead(company, 'SALES CONTRACT')}
       <table class="info">
         <tr>
-          <td style="width:60%;"><strong>Buyer:</strong><br><strong>${client.name_en || client.name || ''}</strong><br>${buyerAddr}</td>
-          <td><strong>S/C NO.:</strong> ${customs.sc_no || ''}<br><strong>Date:</strong> ${customs.date || ''}<br><strong>Payment Term:</strong> ${customs.payment_terms || 'T/T'}</td>
+          <td style="width:60%;" rowspan="2"><strong>Buyer:</strong><br><strong>${client.name_en || client.name || ''}</strong>${buyerAddr ? `<br>${buyerAddr}` : ''}</td>
+          <td><strong>S/C NO.:</strong> ${detail.pi_number || ''}<br><strong>Date:</strong> ${customs.date || ''}<br><strong>Payment Term:</strong> ${customs.payment_terms || 'T/T'}</td>
         </tr>
         <tr>
-          <td><strong>Price Term:</strong> ${customs.price_terms || ''}<br><strong>Lead Time:</strong> ${customs.loading_time || ''}</td>
-          <td><strong>Shipping port:</strong> ${customs.loading_port || ''}<br><strong>Discharging Port:</strong> ${customs.dest_port || ''}<br><strong>Shipping Method:</strong> ${customs.shipping_method || 'By sea'}</td>
+          <td><strong>Price Term:</strong> ${customs.price_terms || ''}<br><strong>Lead Time:</strong> ${customs.loading_time || ''}<br><strong>Shipping port:</strong> ${customs.loading_port || ''}<br><strong>Discharging Port:</strong> ${customs.dest_port || ''}<br><strong>Shipping Method:</strong> ${customs.shipping_method || 'By sea'}</td>
         </tr>
       </table>
       <table class="goods">
@@ -961,9 +1039,12 @@ function buildScHtml(docs) {
 
 /* ---------- Packing List ---------- */
 function buildPlHtml(docs) {
-  const { company, client, customs } = docs
+  const { company, client, customs, detail } = docs
   const t = custTotals(customs)
-  const buyerAddr = [client.address_en || client.address || '', client.country || ''].filter(Boolean).join('<br>')
+  const buyerAddr = client.address_en || client.address || ''
+  // INVOICE No. 关联 Commercial Invoice（S/C NO. + "IN"）
+  const scNo = detail.pi_number || ''
+  const invNo = scNo ? `${scNo}IN` : ''
   const rows = (customs.items || []).map((it, i) => `
     <tr>
       <td class="ctr">${i + 1}</td>
@@ -980,12 +1061,11 @@ function buildPlHtml(docs) {
       ${docHead(company, 'PACKING LIST')}
       <table class="info">
         <tr>
-          <td style="width:60%;"><strong>Buyer:</strong><br><strong>${client.name_en || client.name || ''}</strong><br>${buyerAddr}</td>
-          <td><strong>INVOICE NO.:</strong> ${customs.inv_no || ''}<br><strong>DATE:</strong> ${customs.date || ''}</td>
+          <td style="width:60%;" rowspan="2"><strong>Buyer:</strong><br><strong>${client.name_en || client.name || ''}</strong>${buyerAddr ? `<br>${buyerAddr}` : ''}</td>
+          <td><strong>INVOICE NO.:</strong> ${invNo}<br><strong>DATE:</strong> ${customs.date || ''}</td>
         </tr>
         <tr>
-          <td><strong>Shipping port:</strong> ${customs.loading_port || ''}<br><strong>Discharging Port:</strong> ${customs.dest_port || ''}<br><strong>SC No.:</strong> SC${(customs.sc_no || '').replace(/^.*?-/, '')}</td>
-          <td></td>
+          <td><strong>Shipping port:</strong> ${customs.loading_port || ''}<br><strong>Discharging Port:</strong> ${customs.dest_port || ''}</td>
         </tr>
       </table>
       <table class="goods">
@@ -1015,8 +1095,31 @@ function buildPlHtml(docs) {
    c6 7.09%  c7 7.37%  c8 5.61%   c9 5.12%  c10 6.79% c11 6.60% c12 6.65%
 */
 function buildDeclHtml(docs) {
-  const { decl, company } = docs
-  const items = decl.items || []
+  const { decl, customs, company } = docs
+
+  // 装箱参数以 custForm（customs.items）为准；申报专用字段（hs_code / elements /
+  // origin_country 等）保留 decl.items 的值。以 custItems 为基准循环（行数变化也能跟上）。
+  const custItems = customs?.items || []
+  let items = custItems.length ? custItems : (decl.items || [])
+  if (custItems.length && decl.items?.length) {
+    const declItems = decl.items
+    items = custItems.map((c, i) => {
+      const d = declItems[i] || {}
+      return {
+        ...c,
+        // 申报专用字段优先保留 decl 里的值（custForm 里没有）
+        hs_code:       d.hs_code       || c.hs_code,
+        elements:      d.elements      || c.elements,
+        origin_country:d.origin_country|| c.origin_country,
+        dest_country:  d.dest_country  || c.dest_country,
+        dest_country_name: d.dest_country_name || c.dest_country_name,
+        origin_source: d.origin_source || c.origin_source,
+        levy:          d.levy          || c.levy,
+        name:          d.name          || c.product,
+        currency:      d.currency      || c.currency
+      }
+    })
+  }
 
   // 辅助：带标签的单元格（标签 + 值在同一个 td 内，标签灰底加粗显示）
   const labeledCell = (label, value, span = 1) => {

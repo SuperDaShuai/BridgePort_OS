@@ -70,7 +70,7 @@ frontend/src/
 4. **按供应商拆分**：多供应商订单在 `purchase_contract`/`production_order` JSON 里存 `sub_contracts`/`sub_orders` 数组（字段为 **product_ids** 不是 item_ids），前端树形表格展示，按 `product_id`/`supplier_id` 过滤明细
 5. **JSON 大字段**：`purchase_contract`/`production_order` 等存 MEDIUMTEXT；图片存压缩 base64 data URL
 6. **产品配置管理**：`product_configs` 表定义产品类型及动态字段；生产任务单编辑弹窗「模块二」按选中类型动态渲染并分组显示；产品明细「详细规范」按产品 `product_type` 自动生成模板（`1. 主板:\n2. 显示器:`）；装箱量取产品库 `pcs_per_ctn`，显示为 `N件/箱`
-7. **迁移**：新增表结构变更 → `backend/migrations/0XX_描述.sql` + 注册进 `migrate.js`，只做 ADD COLUMN / CREATE TABLE IF NOT EXISTS 等非破坏性操作
+7. **迁移**：新增表结构变更 → `backend/migrations/0XX_描述.sql` + 注册进 `migrate.js`，只做 ADD COLUMN / CREATE TABLE IF NOT EXISTS 等非破坏性操作。**加列必须同时回填历史数据**（`UPDATE ... JOIN`），且 `check` 不能只判断"列是否存在"，还要判断"待回填数据是否为 0"；否则老数据全为 NULL，前端一旦把新列设为必填就会导致历史记录全部"失效"
 8. **权限**：业务员 permission_level=3 只能看自己 owner_id 的数据；菜单显隐在 SideMenu.vue 的 canSee 单独控制（与路由 meta 必须同步）
 9. **前端弹窗**：所有 el-dialog 必须 `:close-on-click-modal="false"`
 10. **分页**：后端 parsePagination 默认 20、上限 200；前端需要全量数据时分页循环拉取（见 production-orders.vue 的 fetchAllProductsMap）
@@ -96,3 +96,4 @@ cd frontend && npm run dev / npm run build
 - 创建订单时 items 还没入库没有 id → 子合同关联必须用 product_id
 - el-select + allow-create 体验差（需回车确认）→ 自由输入用 el-autocomplete
 - 前端 axios 实例 baseURL 已是 /api，请求路径不要再带 /api 前缀
+- **2026-11 线上事故：产品 HS 编码关联全部失效**。050 迁移给 `products` 加了 `hs_code_id` 却没回填历史数据，前端又把它设成 `required`，导致线上所有产品打开编辑都显示"未选 HS 编码"，需逐条手工重关联。教训：加列迁移必须在同一迁移内完成回填（可拆成后续 054 这类"数据修复迁移"，`check` 用 `WHERE 新列 IS NULL AND 关联字符串 != ''` 的行数判断），发布前用 `--dry-run` + 抽样 SQL 核对 NULL 率

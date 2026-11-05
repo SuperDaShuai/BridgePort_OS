@@ -32,7 +32,8 @@ const ITEM_FIELDS = [
   'img_url', 'spec',
   'pcs_per_ctn', 'ctns', 'qty',
   'price', 'price_rmb', 'cost_cny', 'subtotal_amount',
-  'nw_per_ctn', 'gw_per_ctn', 'cbm_per_ctn'
+  'nw_per_ctn', 'gw_per_ctn', 'cbm_per_ctn',
+  'ctn_length', 'ctn_width', 'ctn_height'
 ];
 
 // 明细行清洗：从 products 取采购价 cost_cny，price 为外销价；联动重算小计
@@ -47,7 +48,7 @@ async function normalizeItems(items, conn) {
   const productSnapMap = new Map();
   if (productIds.length > 0 && conn) {
     const [prods] = await conn.query(
-      `SELECT id, purchase_cost_rmb, pcs_per_ctn, net_weight_kg, gross_weight_kg, ctn_cbm FROM products WHERE id IN (${productIds.join(',')})`
+      `SELECT id, purchase_cost_rmb, pcs_per_ctn, net_weight_kg, gross_weight_kg, ctn_cbm, ctn_length, ctn_width, ctn_height FROM products WHERE id IN (${productIds.join(',')})`
     );
     for (const p of prods) {
       productCostMap.set(p.id, Number(p.purchase_cost_rmb) || 0);
@@ -55,7 +56,10 @@ async function normalizeItems(items, conn) {
         pcs_per_ctn: Number(p.pcs_per_ctn) || 0,
         nw_per_ctn: Number(p.net_weight_kg) || 0,
         gw_per_ctn: Number(p.gross_weight_kg) || 0,
-        cbm_per_ctn: Number(p.ctn_cbm) || 0
+        cbm_per_ctn: Number(p.ctn_cbm) || 0,
+        ctn_length: Number(p.ctn_length) || 0,
+        ctn_width: Number(p.ctn_width) || 0,
+        ctn_height: Number(p.ctn_height) || 0
       });
     }
   }
@@ -70,6 +74,17 @@ async function normalizeItems(items, conn) {
       if (!row.nw_per_ctn)  row.nw_per_ctn  = snap.nw_per_ctn;
       if (!row.gw_per_ctn)  row.gw_per_ctn  = snap.gw_per_ctn;
       if (!row.cbm_per_ctn) row.cbm_per_ctn = snap.cbm_per_ctn;
+      if (!row.ctn_length)  row.ctn_length  = snap.ctn_length;
+      if (!row.ctn_width)   row.ctn_width   = snap.ctn_width;
+      if (!row.ctn_height)  row.ctn_height  = snap.ctn_height;
+    }
+
+    // 纸箱长宽高齐全但单箱体积缺失时，由尺寸推算（cm → m³）
+    if (!row.cbm_per_ctn) {
+      const l = Number(row.ctn_length) || 0;
+      const w = Number(row.ctn_width) || 0;
+      const h = Number(row.ctn_height) || 0;
+      if (l > 0 && w > 0 && h > 0) row.cbm_per_ctn = Number((l * w * h / 1000000).toFixed(4));
     }
 
     // cost_cny 取值优先级：① 前端显式传 ② 产品库 purchase_cost_rmb ③ 兜底为 price

@@ -1163,6 +1163,9 @@ const migrations = [
     id: 51,
     name: 'accessories',
     desc: '新增配件分类表 accessory_categories 和配件表 accessories，预置插头/秤盘/电池/充电器/配件 5 个分类',
+    async check(conn) {
+      return await tableExists(conn, 'accessories');
+    },
     async up(conn) {
       const fs = require('fs');
       const path = require('path');
@@ -1203,6 +1206,68 @@ const migrations = [
       const sqlPath = path.join(__dirname, 'migrations', '053_account_change_log.sql');
       const sql = fs.readFileSync(sqlPath, 'utf8');
       await runSQL(conn, sql);
+    }
+  },
+
+  // 054 数据修复：回填 products.hs_code_id（050 加列时漏了回填）
+  {
+    id: 54,
+    name: 'products_hs_code_id_backfill',
+    desc: '按 hs_code 字符串回填 products.hs_code_id，修复历史产品 HS 编码关联为 NULL 的问题',
+    async check(conn) {
+      const [rows] = await conn.query(
+        `SELECT COUNT(*) AS c FROM products
+         WHERE hs_code_id IS NULL AND hs_code IS NOT NULL AND hs_code != ''`
+      );
+      return rows[0].c === 0;
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '054_products_hs_code_id_backfill.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
+  },
+
+  // 055 order_items 增加纸箱长宽高快照列并回填历史数据
+  {
+    id: 55,
+    name: 'order_items_ctn_size',
+    desc: 'order_items 加 ctn_length/ctn_width/ctn_height，按 product_id 从产品库回填，尺寸齐全时推算 cbm_per_ctn',
+    async check(conn) {
+      if (!(await columnExists(conn, 'order_items', 'ctn_length'))) return false;
+      // 列已存在时，仍需确认没有"产品库有尺寸但明细为空"的待回填行
+      const [rows] = await conn.query(
+        `SELECT COUNT(*) AS c FROM order_items oi
+         JOIN products p ON p.id = oi.product_id
+         WHERE oi.ctn_length IS NULL AND p.ctn_length IS NOT NULL`
+      );
+      return rows[0].c === 0;
+    },
+    async up(conn) {
+      // 加列（逐列判断，幂等）
+      const cols = [
+        ['ctn_length', "ALTER TABLE order_items ADD COLUMN ctn_length DECIMAL(10,2) NULL DEFAULT NULL COMMENT '纸箱长cm' AFTER cbm_per_ctn"],
+        ['ctn_width', "ALTER TABLE order_items ADD COLUMN ctn_width DECIMAL(10,2) NULL DEFAULT NULL COMMENT '纸箱宽cm' AFTER ctn_length"],
+        ['ctn_height', "ALTER TABLE order_items ADD COLUMN ctn_height DECIMAL(10,2) NULL DEFAULT NULL COMMENT '纸箱高cm' AFTER ctn_width"]
+      ];
+      for (const [col, ddl] of cols) {
+        if (!(await columnExists(conn, 'order_items', col))) await runSQL(conn, ddl);
+      }
+      // 回填历史数据 + 推算缺失的单箱体积
+      await runSQL(conn, `
+        UPDATE order_items oi
+        JOIN products p ON p.id = oi.product_id
+        SET oi.ctn_length = p.ctn_length, oi.ctn_width = p.ctn_width, oi.ctn_height = p.ctn_height
+        WHERE oi.ctn_length IS NULL AND p.ctn_length IS NOT NULL
+      `);
+      await runSQL(conn, `
+        UPDATE order_items
+        SET cbm_per_ctn = ROUND(ctn_length * ctn_width * ctn_height / 1000000, 4)
+        WHERE (cbm_per_ctn IS NULL OR cbm_per_ctn = 0)
+          AND ctn_length > 0 AND ctn_width > 0 AND ctn_height > 0
+      `);
     }
   }
 ];
