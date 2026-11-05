@@ -678,7 +678,7 @@ function recalcCustMetrics(row) {
   const pcs = Number(row._pcs) || 0
   const qty = ctns * pcs
   const l = Number(row._l) || 0, w = Number(row._w) || 0, h = Number(row._h) || 0
-  if (l > 0 && w > 0 && h > 0) row._cbm = Number((l * w * h / 1000000).toFixed(4))
+  if (l > 0 && w > 0 && h > 0) row._cbm = Number((l * w * h / 1000000).toFixed(3))
   row.qty = Number(qty.toFixed(0))
   row.nw  = Number((ctns * (Number(row._nw) || 0)).toFixed(2))
   row.gw  = Number((ctns * (Number(row._gw) || 0)).toFixed(2))
