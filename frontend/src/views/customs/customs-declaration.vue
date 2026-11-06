@@ -479,7 +479,8 @@ function flatItemsFromOrder(items, kind, currency, fromCurrency, rate, destCount
       }
     }
     return {
-      product: (name || '') + (model ? ' (' + model + ')' : ''),
+      // 产品名称：仅英文品名（trim 去首尾空格），不拼接型号（对外单据不显示中文内部型号）
+      product: String(it.name_en || '').trim(),
       qty, ctn: Number(ctns.toFixed(2)),
       nw: Number(nw.toFixed(2)), gw: Number(gw.toFixed(2)), cbm: Number(cbm.toFixed(3)),
       price, total,

@@ -151,11 +151,6 @@
               <template v-else>{{ row.qty }}</template>
             </template>
           </el-table-column>
-          <el-table-column label="装箱量" width="100" align="center">
-            <template #default="{ row }">
-              <span>{{ formatPcsPerCtn(row.pcs_per_ctn) }}</span>
-            </template>
-          </el-table-column>
           <el-table-column label="详细规范" min-width="280">
             <template #default="{ row }">
               <el-input
@@ -963,7 +958,7 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
   const headStyle = `border:${BORDER}; padding:6px 8px; font-size:11px; font-weight:bold; text-align:center; ${HEAD_BG}`
   const sectionStyle = `border:${BORDER}; padding:6px 10px; font-size:11px; font-weight:bold; ${SECTION_BG}`
 
-  // ===== 一、产品明细清单（8 列结构：序号/型号/图片/数量/装箱量/详细规范(F:G)/备注） =====
+  // ===== 一、产品明细清单（7 列结构：序号/型号/图片/数量/详细规范(F:G)/备注） =====
   const detailRows = rows.map((r, idx) => {
     const detailSpecHtml = (r.detail_spec || '').split('\n').map(line =>
       `<div style="margin:0; line-height:1.5;">${(line || '').replace(/</g, '&lt;')}</div>`
@@ -973,7 +968,6 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
       <td style="${cellStyle}"><strong>${r.model}</strong></td>
       <td style="${cellStyle} text-align:center;">${r.img_url ? `<img src="${r.img_url}" style="width:36px; height:36px; object-fit:cover; border-radius:3px; display:block; margin:0 auto;" />` : '—'}</td>
       <td style="${cellStyle} text-align:right;">${r.qty || 0}</td>
-      <td style="${cellStyle} text-align:center;">${formatPcsPerCtn(r.pcs_per_ctn)}</td>
       <td style="${cellStyle}" colspan="2">${detailSpecHtml}</td>
       <td style="${cellStyle}">${(r.remark || '').replace(/</g, '&lt;')}</td>
     </tr>`
@@ -1073,15 +1067,14 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
           <th style="${headStyle} width:120px;">供应商型号</th>
           <th style="${headStyle} width:55px;">图片</th>
           <th style="${headStyle} width:60px;">数量</th>
-          <th style="${headStyle} width:75px;">装箱量</th>
           <th style="${headStyle};" colspan="2">详细规范</th>
           <th style="${headStyle} width:90px;">备注</th>
         </tr></thead>
-        <tbody>${detailRows || `<tr><td colspan="8" style="${cellStyle} text-align:center; color:#94a3b8;">暂无明细</td></tr>`}</tbody>
+        <tbody>${detailRows || `<tr><td colspan="7" style="${cellStyle} text-align:center; color:#94a3b8;">暂无明细</td></tr>`}</tbody>
         <tfoot><tr>
           <td style="${cellStyle} text-align:right;" colspan="3"><strong>合计总数量：</strong></td>
           <td style="${cellStyle} text-align:right;"><strong>${totalQty}</strong></td>
-          <td style="${cellStyle}" colspan="4"><em>总计台数请核对装箱数与整批出货体积</em></td>
+          <td style="${cellStyle}" colspan="3"><em>总计台数请核对装箱数与整批出货体积</em></td>
         </tr></tfoot>
       </table>
     </div>
