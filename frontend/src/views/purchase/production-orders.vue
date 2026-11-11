@@ -892,13 +892,15 @@ async function openPreview(row) {
     const supplier = supplierOptions.value.find(s => s.id === detail.supplier_id) || {}
     // 子任务单行：传入 sub_order 用于过滤明细和替换供应商
     const subOrder = row.is_sub ? row.sub_order : null
+    const po = parseDoc(currentOrder.value.production_order)
+    const hasNullSupplierGroup = (po.sub_orders || []).some(s => !s.supplier_id)
     currentOrder.value = { ...currentOrder.value, sub_order: subOrder, sub_index: row.sub_index }
-    previewHtml.value = buildPurchaseOrderHtml(currentOrder.value, company, supplier, productMap, subOrder, row.is_sub ? row.sub_index : null)
+    previewHtml.value = buildPurchaseOrderHtml(currentOrder.value, company, supplier, productMap, subOrder, row.is_sub ? row.sub_index : null, hasNullSupplierGroup)
     previewVisible.value = true
   } catch { /* 拦截器 */ }
 }
 
-function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOrder = null, subIndex = null) {
+function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOrder = null, subIndex = null, hasNullSupplierGroup = false) {
   const po = parseDoc(order.production_order)
   const exts = po.item_extensions || []
   const hasSnapshot = exts.length > 0 && exts[0] && exts[0].model !== undefined
@@ -908,8 +910,13 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
       return pid ? true : (rowSubIdx === null || rowSubIdx === undefined)
     }
     const pids = Array.isArray(subOrder.product_ids) ? subOrder.product_ids.filter(Boolean) : []
+    // 当前子订单是"未指定供应商"组 → 收所有自定义行（其他子订单已被挡掉）
+    const isNullSupplierGroup = subOrder.supplier_id === null || subOrder.supplier_id === undefined
     if (!pid) {
-      // 自定义行：只属于当前子任务单（旧数据无 _sub_index 时保守保留）
+      if (isNullSupplierGroup) return true
+      // 自定义行：hasNullSupplierGroup=true 时只能保留明确属于本子订单的（避免污染）；
+      // 否则宽松保留所有（兼容历史数据，没有专门归属）
+      if (hasNullSupplierGroup) return rowSubIdx === subIndex
       return rowSubIdx === subIndex || rowSubIdx === undefined || rowSubIdx === null
     }
     if (pids.length > 0) {
@@ -1186,7 +1193,9 @@ async function onExportExcel() {
 //   - product_ids 为空 + supplier_id 有值 → 回退按 supplier_id 过滤（旧数据兼容）
 //   - 都为空 → 只显示自定义产品
 // subOrder 为 null（大任务单）则关联全部产品
-function filterItemsBySubOrder(allItems, allExts, productMap, subOrder, subIndex = null) {
+// hasNullSupplierGroup：sub_orders 是否包含 supplier_id=null 的组。为 true 时
+//   说明自定义产品有专门归属，其他子订单不能再宽松保留 !pid 的行（否则会污染）
+function filterItemsBySubOrder(allItems, allExts, productMap, subOrder, subIndex = null, hasNullSupplierGroup = false) {
   let filterFn
   if (!subOrder) {
     // 大任务单：custom 行只保留 _sub_index=null 的（顶层）；普通行全保留
@@ -1194,25 +1203,37 @@ function filterItemsBySubOrder(allItems, allExts, productMap, subOrder, subIndex
   } else {
     const pids = Array.isArray(subOrder.product_ids) ? subOrder.product_ids.filter(Boolean) : []
     if (pids.length > 0) {
-      // 优先用 product_ids 快照精确匹配。custom 行只保留 _sub_index === 当前子索引 的（undefined 旧数据保守保留）
+      // 优先用 product_ids 快照精确匹配。custom 行：只有明确打了 _sub_index 且属于当前子订单的才保留
+      // 关键：hasNullSupplierGroup=true 时不能再宽松保留 null/undefined 的 custom 行（会把"未指定供应商"组的行串过来）
       const idSet = new Set(pids.map(id => Number(id)))
-      // custom 行：属于当前子任务单；_sub_index 缺失的旧数据保守保留（与 PDF 渲染规则一致）
-      filterFn = (pid, rowSubIdx) => !pid
-        ? (rowSubIdx === subIndex || rowSubIdx === null || rowSubIdx === undefined)
-        : idSet.has(Number(pid))
+      filterFn = (pid, rowSubIdx) => {
+        if (!pid) {
+          if (hasNullSupplierGroup) {
+            // 自定义行有专门归属：只有明确标记属于本子订单的才留
+            return rowSubIdx === subIndex
+          }
+          // 旧数据：没有 null 组 → 保守保留所有 custom 行（兼容历史数据）
+          return rowSubIdx === subIndex || rowSubIdx === null || rowSubIdx === undefined
+        }
+        return idSet.has(Number(pid))
+      }
     } else if (subOrder.supplier_id !== null && subOrder.supplier_id !== undefined) {
       // 旧数据无 product_ids 快照时回退按 supplier_id 过滤
       const sid = Number(subOrder.supplier_id)
       filterFn = (pid, rowSubIdx, itemSupplierId) => {
-        if (!pid) return rowSubIdx === subIndex || rowSubIdx === undefined
+        if (!pid) {
+          if (hasNullSupplierGroup) return rowSubIdx === subIndex
+          return rowSubIdx === subIndex || rowSubIdx === undefined
+        }
         const itemSid = itemSupplierId !== undefined
           ? Number(itemSupplierId)
           : (pid && productMap[pid] ? Number(productMap[pid].supplier_id) : null)
         return itemSid !== null && itemSid === sid
       }
     } else {
-      // supplier_id 也为空：只显示当前子任务单的 custom 行
-      filterFn = (pid, rowSubIdx) => !pid && (rowSubIdx === subIndex || rowSubIdx === undefined)
+      // supplier_id 为空：本就是"未指定供应商"组，收所有 custom 行
+      // 其他子订单已被 hasNullSupplierGroup=true 挡掉，这里不会串
+      filterFn = (pid) => !pid
     }
   }
   const hasSnapshot = allExts.length > 0 && allExts[0].model !== undefined
@@ -1325,12 +1346,14 @@ watch(() => editForm.value.active_sub_index, (newIdx, oldIdx) => {
   editForm.value.po_number = sub.po_number || sub.sub_contract_no || editForm.value.po_number
   const fields = readSubFields(sub, originalPoCache.value || {})
   Object.assign(editForm.value, fields)
+  const hasNullGroup = (editForm.value.sub_orders || []).some(s => !s.supplier_id)
   editingItems.value = filterItemsBySubOrder(
     detailItemsCache.value,
     detailExtsCache.value,
     productMapCache.value,
     sub,
-    newIdx
+    newIdx,
+    hasNullGroup
   )
   editingSubIndex.value = newIdx
 })
@@ -1387,7 +1410,8 @@ async function openEdit(row) {
 
     // 按子任务单过滤明细（大任务单 subOrder 为 null 时全部显示；subIndex 用于 custom 行归属）
     // 注意：始终从全量缓存过滤，保证编辑视图与缓存同源
-    editingItems.value = filterItemsBySubOrder(detail.items || [], detailExtsCache.value, productMap, subOrder, isSub ? row.sub_index : null)
+    const hasNullGroup = (subOrders || []).some(s => !s.supplier_id)
+    editingItems.value = filterItemsBySubOrder(detail.items || [], detailExtsCache.value, productMap, subOrder, isSub ? row.sub_index : null, hasNullGroup)
     // 标记 editingItems 归属的子订单，供 watch 区分"重新打开弹窗"与"用户切换"
     editingSubIndex.value = isSub ? row.sub_index : null
     // 对非自定义行，detail_spec 为空时自动填充产品类型对应的配置模板

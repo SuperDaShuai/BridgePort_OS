@@ -430,15 +430,22 @@ router.get(
     // item_extensions 是全量明细快照（含 model/qty/detail_spec/remark 等用户编辑字段），
     // 应优先使用；子订单模式下需按 subOrder.product_ids 过滤，同时只保留 _sub_index 匹配的自定义行。
     const hasSnapshot = exts.length > 0 && exts[0] && exts[0].model !== undefined;
+    // sub_orders 里是否存在 supplier_id=null 的组：存在则自定义行有专门归属，
+    // 其他子订单不能宽松保留 null/undefined 的 custom 行（会污染）
+    const hasNullSupplierGroup = (po.sub_orders || []).some(s => !s.supplier_id);
     let extSubset = exts;
     if (subOrder && hasSnapshot) {
       const pids = Array.isArray(subOrder.product_ids) ? subOrder.product_ids.filter(Boolean) : [];
       const idSet = new Set(pids.map(id => Number(id)));
       const subIdx = subIndex !== undefined ? subIndex : null;
+      // 当前子订单是"未指定供应商"组 → 收所有自定义行（其他子订单已被挡掉）
+      const isNullSupplierGroup = subOrder.supplier_id === null || subOrder.supplier_id === undefined;
       extSubset = exts.filter(e => {
         const pid = Number(e.product_id);
         if (!e.product_id || Number.isNaN(pid)) {
           const rowSub = e._sub_index;
+          if (isNullSupplierGroup) return true;
+          if (hasNullSupplierGroup) return rowSub === subIdx;
           return rowSub === subIdx || rowSub === undefined || rowSub === null;
         }
         return idSet.has(pid);
