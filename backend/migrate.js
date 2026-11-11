@@ -1269,6 +1269,19 @@ const migrations = [
           AND ctn_length > 0 AND ctn_width > 0 AND ctn_height > 0
       `);
     }
+  },
+
+  // 056 orders 增加装箱数据列（出口报关单据套件的装箱数据，独立存储不影响其他单据）
+  {
+    id: 56,
+    name: 'orders_packing_data',
+    desc: 'orders 加 packing_data（MEDIUMTEXT），保存出口报关单据套件中可编辑的装箱数据',
+    async check(conn) {
+      return await columnExists(conn, 'orders', 'packing_data');
+    },
+    async up(conn) {
+      await runSQL(conn, 'ALTER TABLE orders ADD COLUMN packing_data MEDIUMTEXT NULL DEFAULT NULL COMMENT "装箱数据JSON" AFTER decl_data');
+    }
   }
 ];
 

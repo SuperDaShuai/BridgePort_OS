@@ -564,6 +564,8 @@ const editingItems = ref([])
 const detailItemsCache = ref([])
 // 详情快照缓存 + 产品库映射缓存（用于子任务单切换时重新过滤）
 const detailExtsCache = ref([])
+// 记录 editingItems 当前是为哪个子订单构建的（区分"用户切换下拉框"和"openEdit 重新打开弹窗"）
+const editingSubIndex = ref(null)
 const productMapCache = ref({})
 // 原始 production_order JSON 缓存（保存时合并结构字段 is_parent/sub_orders/po_no，避免覆盖丢失）
 const originalPoCache = ref({})
@@ -891,39 +893,66 @@ async function openPreview(row) {
     // 子任务单行：传入 sub_order 用于过滤明细和替换供应商
     const subOrder = row.is_sub ? row.sub_order : null
     currentOrder.value = { ...currentOrder.value, sub_order: subOrder, sub_index: row.sub_index }
-    previewHtml.value = buildPurchaseOrderHtml(currentOrder.value, company, supplier, productMap, subOrder)
+    previewHtml.value = buildPurchaseOrderHtml(currentOrder.value, company, supplier, productMap, subOrder, row.is_sub ? row.sub_index : null)
     previewVisible.value = true
   } catch { /* 拦截器 */ }
 }
 
-function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOrder = null) {
+function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOrder = null, subIndex = null) {
   const po = parseDoc(order.production_order)
-  let items = order.items || []
-  // 子任务单预览：按 product_ids 过滤（同一供应商的产品）；product_ids 为空时回退按 product_supplier_id 过滤
-  // 大任务单（subOrder 为 null）则关联全部产品
-  if (subOrder) {
-    const pids = Array.isArray(subOrder.product_ids) ? subOrder.product_ids : []
-    if (pids.length > 0) {
-      const idSet = new Set(pids.map(id => Number(id)))
-      items = items.filter(it => idSet.has(Number(it.product_id)))
-    } else if (subOrder.supplier_id !== null && subOrder.supplier_id !== undefined) {
-      const sid = Number(subOrder.supplier_id)
-      items = items.filter(it => Number(it.product_supplier_id) === sid)
+  const exts = po.item_extensions || []
+  const hasSnapshot = exts.length > 0 && exts[0] && exts[0].model !== undefined
+  // 统一的行过滤：普通行按 product_ids 快照匹配，自定义行按 _sub_index 归属匹配
+  const subFilter = (pid, rowSubIdx, itemSupplierId) => {
+    if (!subOrder) {
+      return pid ? true : (rowSubIdx === null || rowSubIdx === undefined)
     }
+    const pids = Array.isArray(subOrder.product_ids) ? subOrder.product_ids.filter(Boolean) : []
+    if (!pid) {
+      // 自定义行：只属于当前子任务单（旧数据无 _sub_index 时保守保留）
+      return rowSubIdx === subIndex || rowSubIdx === undefined || rowSubIdx === null
+    }
+    if (pids.length > 0) {
+      return new Set(pids.map(id => Number(id))).has(Number(pid))
+    }
+    if (subOrder.supplier_id !== null && subOrder.supplier_id !== undefined) {
+      const itemSid = itemSupplierId !== undefined
+        ? Number(itemSupplierId)
+        : (productMap[pid] ? Number(productMap[pid].supplier_id) : null)
+      return itemSid !== null && itemSid === Number(subOrder.supplier_id)
+    }
+    return false
+  }
+  // 子任务单内部顺序：以 subOrder.product_ids 为准（与编辑弹窗顺序一致），自定义行排在其后
+  const orderByPids = (rows, pidOf) => {
+    if (!subOrder) return rows
+    const pids = (Array.isArray(subOrder.product_ids) ? subOrder.product_ids : []).map(Number)
+    const rank = new Map(pids.map((p, i) => [p, i]))
+    const regular = rows.filter(r => pidOf(r))
+    const customs = rows.filter(r => !pidOf(r))
+    regular.sort((a, b) => {
+      const ra = rank.has(Number(pidOf(a))) ? rank.get(Number(pidOf(a))) : 9999
+      const rb = rank.has(Number(pidOf(b))) ? rank.get(Number(pidOf(b))) : 9999
+      return ra - rb
+    })
+    return [...regular, ...customs]
   }
   const today = new Date()
   const orderDate = today.toISOString().slice(0, 10)
-  const exts = po.item_extensions || []
-  // 扩展映射：按 product_id 做 key（子任务单模式下 exts 是全量数组，items 是过滤后的，位置可能错位）
+  // 扩展映射：按 product_id 做 key（回退路径用）
   const extMap = new Map()
   for (const e of exts) {
     const pid = Number(e.product_id)
     if (!Number.isNaN(pid)) extMap.set(pid, e)
   }
-  // 行源：子任务单模式强制走非 snapshot 分支
-  const hasSnapshot = !subOrder && exts.length > 0 && exts[0].model !== undefined
+  // 原始 items 列表（仅作为回退，hasSnapshot=true 时不会用）
+  const allItems = order.items || []
+  // 行源：优先用 item_extensions 快照（带用户编辑），否则回退原始 items（同样要按子订单过滤）
   const rows = hasSnapshot
-    ? exts.map((e) => {
+    ? orderByPids(
+        exts.filter(e => subFilter(e.product_id, e._sub_index ?? null, e.product_supplier_id)),
+        (e) => e.product_id
+      ).map((e) => {
         const prod = resolveProd(e, productMap)
         return {
           model: (prod && prod.our_model) || e.supplier_model || e.model || '',
@@ -935,7 +964,10 @@ function buildPurchaseOrderHtml(order, company, supplier, productMap = {}, subOr
           remark: e.remark || ''
         }
       })
-    : items.map((it) => {
+    : orderByPids(
+        allItems.filter(it => subFilter(it.product_id, null, it.product_supplier_id)),
+        (it) => it.product_id
+      ).map((it) => {
         const prod = resolveProd(it, productMap)
         const ext = extMap.get(Number(it.product_id)) || {}
         return {
@@ -1154,28 +1186,33 @@ async function onExportExcel() {
 //   - product_ids 为空 + supplier_id 有值 → 回退按 supplier_id 过滤（旧数据兼容）
 //   - 都为空 → 只显示自定义产品
 // subOrder 为 null（大任务单）则关联全部产品
-function filterItemsBySubOrder(allItems, allExts, productMap, subOrder) {
+function filterItemsBySubOrder(allItems, allExts, productMap, subOrder, subIndex = null) {
   let filterFn
   if (!subOrder) {
-    filterFn = () => true
+    // 大任务单：custom 行只保留 _sub_index=null 的（顶层）；普通行全保留
+    filterFn = (pid, rowSubIdx) => !pid ? (rowSubIdx === null || rowSubIdx === undefined) : true
   } else {
     const pids = Array.isArray(subOrder.product_ids) ? subOrder.product_ids.filter(Boolean) : []
     if (pids.length > 0) {
-      // 优先用 product_ids 快照精确匹配（归类后固定）
+      // 优先用 product_ids 快照精确匹配。custom 行只保留 _sub_index === 当前子索引 的（undefined 旧数据保守保留）
       const idSet = new Set(pids.map(id => Number(id)))
-      filterFn = (pid) => idSet.has(Number(pid))
+      // custom 行：属于当前子任务单；_sub_index 缺失的旧数据保守保留（与 PDF 渲染规则一致）
+      filterFn = (pid, rowSubIdx) => !pid
+        ? (rowSubIdx === subIndex || rowSubIdx === null || rowSubIdx === undefined)
+        : idSet.has(Number(pid))
     } else if (subOrder.supplier_id !== null && subOrder.supplier_id !== undefined) {
       // 旧数据无 product_ids 快照时回退按 supplier_id 过滤
       const sid = Number(subOrder.supplier_id)
-      filterFn = (pid, itemSupplierId) => {
+      filterFn = (pid, rowSubIdx, itemSupplierId) => {
+        if (!pid) return rowSubIdx === subIndex || rowSubIdx === undefined
         const itemSid = itemSupplierId !== undefined
           ? Number(itemSupplierId)
           : (pid && productMap[pid] ? Number(productMap[pid].supplier_id) : null)
         return itemSid !== null && itemSid === sid
       }
     } else {
-      // supplier_id 也为空：只显示自定义产品
-      filterFn = (pid) => !pid
+      // supplier_id 也为空：只显示当前子任务单的 custom 行
+      filterFn = (pid, rowSubIdx) => !pid && (rowSubIdx === subIndex || rowSubIdx === undefined)
     }
   }
   const hasSnapshot = allExts.length > 0 && allExts[0].model !== undefined
@@ -1187,8 +1224,8 @@ function filterItemsBySubOrder(allItems, allExts, productMap, subOrder) {
     const hit = Object.values(productMap).find((p) => (p.our_model && p.our_model === m) || p.model === m)
     return hit ? (hit.img_url || '') : ''
   }
-  return hasSnapshot
-    ? allExts.filter(ext => filterFn(ext.product_id, ext.product_supplier_id)).map((ext, idx) => {
+  const rows = hasSnapshot
+    ? allExts.filter(ext => filterFn(ext.product_id, ext._sub_index ?? null, ext.product_supplier_id)).map((ext, idx) => {
         const prod = resolveProd(ext, productMap)
         return {
           idx,
@@ -1197,14 +1234,15 @@ function filterItemsBySubOrder(allItems, allExts, productMap, subOrder) {
           supplier_model: prod ? (prod.our_model || '') : (ext.supplier_model || ''),
           qty: Number(ext.qty) || 0,
           img_url: snapshotImg(ext),
-          // 装箱量/产品类型严格以产品库为准（图二为准），产品库缺失时才回退快照值
           pcs_per_ctn: prod ? (prod.pcs_per_ctn ?? '') : (ext.pcs_per_ctn || ''),
           product_type: prod ? (prod.product_type || '') : (ext.product_type || ''),
           detail_spec: ext.detail_spec || '',
-          remark: ext.remark || ''
+          remark: ext.remark || '',
+          _sub_index: ext._sub_index ?? null,
+          _custom: !ext.product_id
         }
       })
-    : (allItems || []).filter(it => filterFn(it.product_id, it.product_supplier_id)).map((it, idx) => {
+    : (allItems || []).filter(it => filterFn(it.product_id, null, it.product_supplier_id)).map((it, idx) => {
         const ext = allExts[idx] || {}
         const prod = resolveProd(it, productMap)
         return {
@@ -1214,30 +1252,87 @@ function filterItemsBySubOrder(allItems, allExts, productMap, subOrder) {
           supplier_model: prod ? (prod.our_model || '') : '',
           qty: it.qty,
           img_url: it.img_url || (prod ? (prod.img_url || '') : ''),
-          // 装箱量/产品类型严格以产品库为准（图二为准），产品库缺失时才回退明细值
           pcs_per_ctn: prod ? (prod.pcs_per_ctn ?? '') : (it.pcs_per_ctn || ''),
           product_type: prod ? (prod.product_type || '') : (it.product_type || ''),
           detail_spec: ext.detail_spec || '',
-          remark: ext.remark || ''
+          remark: ext.remark || '',
+          _sub_index: null,
+          _custom: false
         }
       })
+  // 子任务单模式：按 product_ids 顺序排列，自定义行排在后面（与 PDF/Excel 渲染顺序完全一致）
+  if (!subOrder) return rows
+  const pids = (Array.isArray(subOrder.product_ids) ? subOrder.product_ids : []).map(Number)
+  const rank = new Map(pids.map((p, i) => [p, i]))
+  const regular = rows.filter(r => r.product_id)
+  const customs = rows.filter(r => !r.product_id)
+  regular.sort((a, b) => {
+    const ra = rank.has(Number(a.product_id)) ? rank.get(Number(a.product_id)) : 9999
+    const rb = rank.has(Number(b.product_id)) ? rank.get(Number(b.product_id)) : 9999
+    return ra - rb
+  })
+  return [...regular, ...customs].map((r, idx) => ({ ...r, idx }))
 }
 
-// 切换子任务单时重新过滤明细 + 加载该子任务单的独立字段（保留 detail.items / exts / productMap 缓存）
-watch(() => editForm.value.active_sub_index, (idx) => {
-  if (idx === null || idx === undefined) return
-  const sub = editForm.value.sub_orders?.[idx]
+// 切换子任务单时重新过滤明细 + 加载该子任务单的独立字段
+// 切换前自动把当前 editingItems 合并回 detailExtsCache 作为草稿，避免未保存的新增行丢失
+watch(() => editForm.value.active_sub_index, (newIdx, oldIdx) => {
+  // openEdit 重新打开弹窗时会整体重建 editingItems（editingSubIndex 已指向新索引），
+  // 此时 watch 是被 editForm 重新赋值触发的，不是用户切换，直接跳过合并，否则会污染缓存
+  if (editingSubIndex.value === newIdx) return
+  // 1. 离开前：把当前 editingItems 合并回 detailExtsCache（按 _sub_index 替换归属相同的行）
+  if (oldIdx !== null && oldIdx !== undefined && editingItems.value.length > 0) {
+    const currentEditingPids = new Set(editingItems.value.filter(it => it.product_id).map(it => Number(it.product_id)))
+    const newCustomRows = editingItems.value.filter(it => !it.product_id).map(it => ({
+      product_id: null,
+      model: it.model || '',
+      supplier_model: it.supplier_model || '',
+      qty: Number(it.qty) || 0,
+      img_url: it.img_url || '',
+      pcs_per_ctn: it.pcs_per_ctn || '',
+      product_type: it.product_type || '',
+      detail_spec: it.detail_spec || '',
+      remark: it.remark || '',
+      _sub_index: oldIdx
+    }))
+    // 从 detailExtsCache 中去掉当前编辑过的行（同 _sub_index 的 custom + 同 pid 的普通行），再追加新 editing
+    const merged = (detailExtsCache.value || []).filter(e => {
+      const pid = Number(e.product_id)
+      if (e.product_id !== null && e.product_id !== undefined && !Number.isNaN(pid)) {
+        return !currentEditingPids.has(pid)
+      }
+      // custom 行：去掉属于 oldIdx 的（会用新的替换）
+      return e._sub_index !== oldIdx
+    })
+    // 普通行也从 editingItems 里抽出来追回去（保持最新值）
+    const newRegularRows = editingItems.value.filter(it => it.product_id).map(it => ({
+      product_id: it.product_id,
+      model: it.model || '',
+      supplier_model: it.supplier_model || '',
+      qty: Number(it.qty) || 0,
+      img_url: it.img_url || '',
+      pcs_per_ctn: it.pcs_per_ctn || '',
+      product_type: it.product_type || '',
+      detail_spec: it.detail_spec || '',
+      remark: it.remark || '',
+      _sub_index: null
+    }))
+    detailExtsCache.value = [...merged, ...newRegularRows, ...newCustomRows]
+  }
+  if (newIdx === null || newIdx === undefined) return
+  const sub = editForm.value.sub_orders?.[newIdx]
   if (!sub) return
   editForm.value.po_number = sub.po_number || sub.sub_contract_no || editForm.value.po_number
-  // 加载该子任务单的独立编辑字段（回退到顶层 po）
   const fields = readSubFields(sub, originalPoCache.value || {})
   Object.assign(editForm.value, fields)
   editingItems.value = filterItemsBySubOrder(
     detailItemsCache.value,
     detailExtsCache.value,
     productMapCache.value,
-    sub
+    sub,
+    newIdx
   )
+  editingSubIndex.value = newIdx
 })
 
 async function openEdit(row) {
@@ -1268,11 +1363,33 @@ async function openEdit(row) {
     const exts = po.item_extensions || []
     // 缓存用于子任务单切换时重新过滤
     detailItemsCache.value = detail.items || []
-    detailExtsCache.value = exts
+    // 关键：缓存必须始终是全量行（覆盖所有子订单），否则切换子订单时其他子订单的行会丢失。
+    // 后端默认不写 item_extensions，为空时从 DB 明细派生一份全量快照。
+    const hasSnapshot = exts.length > 0 && exts[0] && exts[0].model !== undefined
+    detailExtsCache.value = hasSnapshot
+      ? exts
+      : (detail.items || []).map(it => {
+          const prod = resolveProd(it, productMap)
+          return {
+            product_id: it.product_id || null,
+            model: it.model || '',
+            supplier_model: prod ? (prod.our_model || '') : (it.supplier_model || ''),
+            qty: Number(it.qty) || 0,
+            img_url: it.img_url || '',
+            pcs_per_ctn: prod ? (prod.pcs_per_ctn ?? '') : (it.pcs_per_ctn || ''),
+            product_type: prod ? (prod.product_type || '') : (it.product_type || ''),
+            detail_spec: '',
+            remark: '',
+            _sub_index: null
+          }
+        })
     productMapCache.value = productMap
 
-    // 按子任务单过滤明细（大任务单 subOrder 为 null 时全部显示）
-    editingItems.value = filterItemsBySubOrder(detail.items || [], exts, productMap, subOrder)
+    // 按子任务单过滤明细（大任务单 subOrder 为 null 时全部显示；subIndex 用于 custom 行归属）
+    // 注意：始终从全量缓存过滤，保证编辑视图与缓存同源
+    editingItems.value = filterItemsBySubOrder(detail.items || [], detailExtsCache.value, productMap, subOrder, isSub ? row.sub_index : null)
+    // 标记 editingItems 归属的子订单，供 watch 区分"重新打开弹窗"与"用户切换"
+    editingSubIndex.value = isSub ? row.sub_index : null
     // 对非自定义行，detail_spec 为空时自动填充产品类型对应的配置模板
     editingItems.value.forEach(row => {
       if (!row._custom && !row.detail_spec) {
@@ -1299,7 +1416,7 @@ async function openEdit(row) {
   } catch { /* 拦截器 */ }
 }
 
-// 添加自定义明细行：型号/数量可编辑，扩展字段与普通行一致
+// 添加自定义明细行：标记所属子任务单 _sub_index，避免切换子任务单时泄漏
 function addItemRow() {
   editingItems.value.push({
     idx: editingItems.value.length,
@@ -1311,7 +1428,8 @@ function addItemRow() {
     pcs_per_ctn: '',
     detail_spec: '',
     remark: '',
-    _custom: true
+    _custom: true,
+    _sub_index: editForm.value.is_sub ? editForm.value.active_sub_index : null
   })
 }
 
@@ -1352,7 +1470,14 @@ async function onSave() {
 
   saving.value = true
   try {
+    const origPo = originalPoCache.value || {}
+    const isSub = !!editForm.value.is_sub
+    const subOrders = Array.isArray(editForm.value.sub_orders) ? editForm.value.sub_orders : []
+    const activeIdx = editForm.value.active_sub_index
+    const pMap = productMapCache.value || {}
+
     // 明细行快照：含型号/数量（支持增删行），预览/打印与 Excel 下载按此快照渲染
+    // 自定义行必须带 _sub_index，用于严格归属到所属子任务单
     const editedExts = editingItems.value.map(it => ({
       product_id: it.product_id || null,
       model: it.model || '',
@@ -1362,44 +1487,95 @@ async function onSave() {
       pcs_per_ctn: it.pcs_per_ctn || '',
       product_type: it.product_type || '',
       detail_spec: it.detail_spec || '',
-      remark: it.remark
+      remark: it.remark || '',
+      _sub_index: it._sub_index ?? null
     }))
 
-    // 子任务单模式：editedExts 仅含当前供应商的产品，需合并回全量快照（按 product_id 替换匹配项，保留其他供应商的行）
-    // 大任务单模式：直接用 editedExts 作为新的全量快照
-    const origPo = originalPoCache.value || {}
-    const isSub = !!editForm.value.is_sub
-    const subOrders = Array.isArray(editForm.value.sub_orders) ? editForm.value.sub_orders : []
+    // ===== 关键：把当前 editingItems 先合并进 detailExtsCache =====
+    // watch 切换子任务单时会自动合并，但"没切换直接保存"时 watch 没触发。
+    // 另外：首次保存时 production_order 还没有 item_extensions（后端生成时不写这个字段），
+    // 必须以 DB 明细为基准派生全量快照，否则会清掉其他子任务单的行。
+    const currentPids = new Set(editedExts.filter(e => e.product_id).map(e => Number(e.product_id)))
+    // 基准快照：优先用会话缓存；缓存为空则从 DB 明细派生（覆盖首次保存场景）
+    let baseExts = Array.isArray(detailExtsCache.value) && detailExtsCache.value.length > 0
+      ? detailExtsCache.value
+      : (detailItemsCache.value || []).map(it => {
+          const prod = resolveProd(it, pMap)
+          return {
+            product_id: it.product_id || (prod ? prod.id : null) || null,
+            model: it.model || '',
+            supplier_model: prod ? (prod.our_model || '') : (it.supplier_model || ''),
+            qty: Number(it.qty) || 0,
+            img_url: typeof it.img_url === 'string' && it.img_url.startsWith('data:image') ? it.img_url : (it.img_url || ''),
+            pcs_per_ctn: prod ? (prod.pcs_per_ctn ?? '') : (it.pcs_per_ctn || ''),
+            product_type: prod ? (prod.product_type || '') : (it.product_type || ''),
+            detail_spec: '',
+            remark: '',
+            _sub_index: null
+          }
+        })
+    const cache = baseExts.filter(e => {
+      const pid = Number(e.product_id)
+      if (e.product_id !== null && e.product_id !== undefined && !Number.isNaN(pid)) {
+        return !currentPids.has(pid)  // 去掉同 pid 的普通行（用 editedExts 里的更新）
+      }
+      return e._sub_index !== activeIdx  // 去掉归属当前子任务单的 custom 行
+    })
+    // 给 editedExts 里没 _sub_index 的 custom 行强制打上 activeIdx
+    const finalEdited = editedExts.map(e => {
+      if (!e.product_id && (e._sub_index === null || e._sub_index === undefined)) {
+        return { ...e, _sub_index: activeIdx }
+      }
+      return e
+    })
+
+    // ===== 组装最终 item_extensions =====
+    // 子任务单模式：按"子任务单顺序 → 该单 product_ids 顺序 → 该单自定义行"重排，
+    // 保证每个子任务单在预览/Excel 里的行顺序与编辑弹窗完全一致（序号不会上移）
     let item_extensions
     if (isSub) {
-      // 全量快照来源：优先用已存在的 item_extensions（二次保存场景）；
-      // 首次保存时 production_order 无 item_extensions，回退到 DB 明细行派生（否则其他子任务单的产品会丢失）
-      const pMap = productMapCache.value || {}
-      let origExts = Array.isArray(origPo.item_extensions) && origPo.item_extensions.length > 0
-        ? origPo.item_extensions
-        : (detailItemsCache.value || []).map(it => {
-            const prod = resolveProd(it, pMap)
-            return {
-              product_id: it.product_id || (prod ? prod.id : null) || null,
-              model: it.model || '',
-              supplier_model: prod ? (prod.our_model || '') : (it.supplier_model || ''),
-              qty: Number(it.qty) || 0,
-              img_url: typeof it.img_url === 'string' && it.img_url.startsWith('data:image') ? it.img_url : (it.img_url || ''),
-              pcs_per_ctn: prod ? (prod.pcs_per_ctn ?? '') : (it.pcs_per_ctn || ''),
-              product_type: prod ? (prod.product_type || '') : (it.product_type || ''),
-              detail_spec: '',
-              remark: ''
-            }
-          })
-      const editedIds = new Set(editedExts.map(e => Number(e.product_id)).filter(Boolean))
-      // 保留原始快照中不属于当前子任务单的行，再追加当前编辑的行
-      const kept = origExts.filter(e => {
-        const pid = Number(e.product_id)
-        return pid ? !editedIds.has(pid) : true
+      const merged = [...cache, ...finalEdited]
+      // 当前子任务单的 product_ids 以编辑后的顺序为准
+      const activePids = finalEdited.filter(e => e.product_id).map(e => Number(e.product_id))
+      if (subOrders[activeIdx]) subOrders[activeIdx].product_ids = activePids
+      const ordered = []
+      const used = new Set()
+      const pushRow = (row) => {
+        const key = row.product_id ? `p-${row.product_id}` : `c-${row._sub_index}-${ordered.length}`
+        if (used.has(key)) return
+        used.add(key)
+        ordered.push(row)
+      }
+      const allSubs = subOrders.map((so, i) => ({ so, i }))
+      const idxOrder = allSubs.some(x => x.i === activeIdx)
+        ? allSubs
+        : [...allSubs, { so: null, i: activeIdx }]
+      for (const { so, i } of idxOrder) {
+        const pids = i === activeIdx
+          ? activePids
+          : (Array.isArray(so?.product_ids) ? so.product_ids.map(Number) : [])
+        // 普通行：按该子任务单的 product_ids 顺序
+        for (const pid of pids) {
+          const row = merged.find(e => e.product_id && Number(e.product_id) === pid)
+          if (row) pushRow(row)
+        }
+        // 自定义行：只归属 _sub_index === 该子任务单的行
+        merged
+          .filter(e => !e.product_id && (e._sub_index ?? null) === i)
+          .forEach(pushRow)
+      }
+      // 兜底：未被任何子任务单收录的行（旧数据 product_ids 缺失等）按原顺序追加
+      merged.forEach(e => {
+        if (e.product_id && used.has(`p-${e.product_id}`)) return
+        if (!e.product_id && ordered.includes(e)) return
+        ordered.push(e)
       })
-      item_extensions = [...kept, ...editedExts]
+      item_extensions = ordered
+      detailExtsCache.value = ordered.slice()
     } else {
-      item_extensions = editedExts
+      // 大任务单：直接用 editedExts（顶层独立）
+      item_extensions = finalEdited.map(e => e.product_id ? e : { ...e, _sub_index: null })
+      detailExtsCache.value = item_extensions.slice()
     }
 
     // 构造子任务单独立字段对象（模块3+4合并后只保留 plug_photos 和 remark_note）

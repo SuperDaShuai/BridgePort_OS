@@ -711,15 +711,32 @@ router.get(
     ws.getCell('G4').value = (sample.delivery_date || '').slice(0, 10);
 
     // ===== 明细行准备 =====
-    const hasSnapshot = !subOrder && exts.length > 0 && exts[0] && exts[0].model !== undefined;
-    // 扩展映射：按 product_id 做 key（子任务单模式下 exts 是全量数组，filteredItems 是过滤后的，位置可能错位）
+    // item_extensions 是全量明细快照（含 model/qty/detail_spec/remark 等用户编辑字段），
+    // 应优先使用；子订单模式下需按 subOrder.product_ids 过滤，同时只保留 _sub_index 匹配的自定义行。
+    const hasSnapshot = exts.length > 0 && exts[0] && exts[0].model !== undefined;
+    let extSubset = exts;
+    if (subOrder && hasSnapshot) {
+      const pids = Array.isArray(subOrder.product_ids) ? subOrder.product_ids.filter(Boolean) : [];
+      const idSet = new Set(pids.map(id => Number(id)));
+      const subIdx = subIndex !== undefined ? subIndex : null;
+      extSubset = exts.filter(e => {
+        const pid = Number(e.product_id);
+        if (!e.product_id || Number.isNaN(pid)) {
+          // 自定义行：仅保留 _sub_index 匹配的，或旧数据无 _sub_index 时保守保留
+          const rowSub = e._sub_index;
+          return rowSub === subIdx || rowSub === undefined || rowSub === null;
+        }
+        return idSet.has(pid);
+      });
+    }
+    // 扩展映射：按 product_id 做 key（回退路径用）
     const extMap = new Map();
     for (const e of exts) {
       const pid = Number(e.product_id);
       if (!Number.isNaN(pid)) extMap.set(pid, e);
     }
     const detailRows = hasSnapshot
-      ? exts.map((e) => ({
+      ? extSubset.map((e) => ({
           model: e.supplier_model || e.model || '',
           qty: Number(e.qty) || 0,
           img_url: e.img_url || '',

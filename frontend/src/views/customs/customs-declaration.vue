@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<template>
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿<template>
   <el-card shadow="never" class="page-card">
     <!-- 页面标题（仿参考项目） -->
     <div class="page-header">
@@ -44,8 +44,9 @@
           <el-button size="small" @click="openPreview(row, 'pl')">Packing List</el-button>
         </template>
       </el-table-column>
-      <el-table-column label="操作 (补录信息)" width="180" align="center" fixed="right">
+      <el-table-column label="操作" width="300" align="center" fixed="right">
         <template #default="{ row }">
+          <el-button size="small" type="primary" plain @click="openPackData(row)">装箱数据</el-button>
           <el-button v-if="canMaintain" size="small" @click="openCustomsEdit(row)">编辑清关外销单据</el-button>
         </template>
       </el-table-column>
@@ -332,6 +333,145 @@
         <el-button type="primary" :loading="saving" @click="saveCust">保存单据信息</el-button>
       </template>
     </el-dialog>
+
+    <!-- ========== 装箱数据（关联 PI 产品，表格数据可编辑） ========== -->
+    <el-dialog
+      v-model="packVisible" :close-on-click-modal="false"
+      :title="packTitle"
+      width="96%"
+      destroy-on-close
+      top="3vh"
+    >
+      <div class="doc-toolbar no-print">
+        <el-button type="success" :icon="Download" @click="onExportPackExcel">下载 Excel (.xls)</el-button>
+        <el-button type="warning" :icon="Printer" @click="onPrintPack">打印 / 另存为 PDF</el-button>
+      </div>
+      <el-table
+        :data="packDisplayRows"
+        :row-key="row => row._rowKey"
+        :row-class-name="({ row }) => (row._isSubtotal ? 'pack-subtotal-row' : '')"
+        border size="small" max-height="62vh" style="width:100%"
+      >
+        <el-table-column label="序号" width="50" align="center" fixed>
+          <template #default="{ row }">{{ row._isSubtotal ? '' : row._seq }}</template>
+        </el-table-column>
+        <el-table-column label="产品型号" min-width="210" fixed>
+          <template #default="{ row }">
+            <span v-if="row._isSubtotal" class="pack-sub-label">小计 · {{ row._groupLabel }}</span>
+            <el-input v-else v-model="row.model" size="small" :disabled="!canMaintain" />
+          </template>
+        </el-table-column>
+        <el-table-column label="件数" width="80">
+          <template #default="{ row }">
+            <span v-if="row._isSubtotal" class="pack-sub-val"><i>件数</i><b>{{ row._ctns }}</b></span>
+            <el-input-number v-else v-model="row.ctns" :min="0" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" @change="recalcPackRow(row, 'ctns')" />
+          </template>
+        </el-table-column>
+        <el-table-column label="包装数" width="80">
+          <template #default="{ row }">
+            <span v-if="row._isSubtotal"></span>
+            <el-input-number v-else v-model="row.pcs" :min="0" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" @change="recalcPackRow(row, 'pcs')" />
+          </template>
+        </el-table-column>
+        <el-table-column label="数量" width="85">
+          <template #default="{ row }">
+            <span v-if="row._isSubtotal" class="pack-sub-val"><i>数量</i><b>{{ row._qty }}</b></span>
+            <el-input-number v-else v-model="row.qty" :min="0" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" @change="recalcPackRow(row, 'qty')" />
+          </template>
+        </el-table-column>
+        <el-table-column label="单价" width="95">
+          <template #default="{ row }">
+            <span v-if="row._isSubtotal" class="pack-sub-val"><i>平均价</i><b>{{ row._avgPrice.toFixed(2) }}</b></span>
+            <el-input-number v-else v-model="row.price" :min="0" :precision="2" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" @change="recalcPackRow(row, 'price')" />
+          </template>
+        </el-table-column>
+        <el-table-column label="总价" width="105">
+          <template #default="{ row }">
+            <span v-if="row._isSubtotal"></span>
+            <el-input-number v-else v-model="row.total" :min="0" :precision="2" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" />
+          </template>
+        </el-table-column>
+        <el-table-column label="装箱后外径尺寸(cm)" align="center">
+          <el-table-column label="长" width="78">
+            <template #default="{ row }">
+              <span v-if="row._isSubtotal"></span>
+              <el-input-number v-else v-model="row.l" :min="0" :precision="1" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" @change="recalcPackRow(row, 'l')" />
+            </template>
+          </el-table-column>
+          <el-table-column label="宽" width="78">
+            <template #default="{ row }">
+              <span v-if="row._isSubtotal"></span>
+              <el-input-number v-else v-model="row.w" :min="0" :precision="1" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" @change="recalcPackRow(row, 'w')" />
+            </template>
+          </el-table-column>
+          <el-table-column label="高" width="78">
+            <template #default="{ row }">
+              <span v-if="row._isSubtotal"></span>
+              <el-input-number v-else v-model="row.h" :min="0" :precision="1" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" @change="recalcPackRow(row, 'h')" />
+            </template>
+          </el-table-column>
+        </el-table-column>
+        <el-table-column label="单件体积/重量" align="center">
+          <el-table-column label="体积" width="85">
+            <template #default="{ row }">
+              <span v-if="row._isSubtotal"></span>
+              <el-input-number v-else v-model="row.unitCbm" :min="0" :precision="3" :step="0.001" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" @change="recalcPackRow(row, 'unitCbm')" />
+            </template>
+          </el-table-column>
+          <el-table-column label="毛重" width="85">
+            <template #default="{ row }">
+              <span v-if="row._isSubtotal"></span>
+              <el-input-number v-else v-model="row.unitGw" :min="0" :precision="2" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" @change="recalcPackRow(row, 'unitGw')" />
+            </template>
+          </el-table-column>
+          <el-table-column label="净重" width="85">
+            <template #default="{ row }">
+              <span v-if="row._isSubtotal"></span>
+              <el-input-number v-else v-model="row.unitNw" :min="0" :precision="2" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" @change="recalcPackRow(row, 'unitNw')" />
+            </template>
+          </el-table-column>
+        </el-table-column>
+        <el-table-column label="总体积" width="90">
+          <template #default="{ row }">
+            <span v-if="row._isSubtotal" class="pack-sub-val"><i>总体积</i><b>{{ row._cbm.toFixed(3) }}</b></span>
+            <el-input-number v-else v-model="row.totalCbm" :min="0" :precision="3" :step="0.001" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" />
+          </template>
+        </el-table-column>
+        <el-table-column label="总净重" width="90">
+          <template #default="{ row }">
+            <span v-if="row._isSubtotal"></span>
+            <el-input-number v-else v-model="row.totalNw" :min="0" :precision="2" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" />
+          </template>
+        </el-table-column>
+        <el-table-column label="总毛重" width="90">
+          <template #default="{ row }">
+            <span v-if="row._isSubtotal" class="pack-sub-val"><i>总毛重</i><b>{{ row._gw.toFixed(2) }}</b></span>
+            <el-input-number v-else v-model="row.totalGw" :min="0" :precision="2" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" />
+          </template>
+        </el-table-column>
+        <el-table-column label="申报体积" width="95">
+          <template #default="{ row }">
+            <span v-if="row._isSubtotal"></span>
+            <el-input-number v-else v-model="row.declared" :min="0" :precision="3" :step="0.001" :controls="false" size="small" style="width:100%" :disabled="!canMaintain" @change="recalcPackRow(row, 'declared')" />
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pack-summary">
+        <span>总件数 <b>{{ packTotals.ctns }}</b></span>
+        <span>总数量 <b>{{ packTotals.qty }}</b></span>
+        <span>总金额 <b>{{ packTotals.total.toFixed(2) }}</b></span>
+        <span>总体积 <b>{{ packTotals.cbm.toFixed(3) }}</b></span>
+        <span>总净重 <b>{{ packTotals.nw.toFixed(2) }}</b></span>
+        <span>总毛重 <b>{{ packTotals.gw.toFixed(2) }}</b></span>
+        <span>申报体积 <b>{{ packTotals.declared.toFixed(3) }}</b></span>
+      </div>
+
+      <template #footer>
+        <el-button @click="packVisible = false">关 闭</el-button>
+        <el-button v-if="canMaintain" type="primary" :loading="packSaving" @click="savePack">保存装箱数据</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -361,6 +501,13 @@ const previewType = ref('decl')
 const previewTitle = ref('')
 const previewHtml = ref('')
 const currentOrder = ref(null)
+
+// 装箱数据（可编辑）
+const packVisible = ref(false)
+const packTitle = ref('')
+const packPi = ref('')
+const packForm = ref([])
+const packSaving = ref(false)
 
 // 编辑弹窗
 const declEditVisible = ref(false)
@@ -800,6 +947,333 @@ function onPrint() {
 function onExportExcel() {
   const nameMap = { decl: 'DeclarationDraft', ci: 'CommercialInvoice', sc: 'SalesContract', pl: 'PackingList' }
   exportExcel(previewHtml.value, `${nameMap[previewType.value]}_${currentOrder.value.detail.pi_number}.xls`)
+}
+
+/* ========== 装箱数据（仅关联 PI 外销订单产品，不影响其他单据） ========== */
+function packNum(v, digits) {
+  return Number(v || 0).toFixed(digits)
+}
+function packDim(v) {
+  const n = Number(v) || 0
+  return n ? String(Number(n.toFixed(1))) : ''
+}
+
+// 以外销订单产品明细为准生成装箱行，已保存的编辑值优先
+function buildPackRows(detail, saved) {
+  const savedArr = Array.isArray(saved) ? saved : []
+  const savedByPid = new Map()
+  savedArr.forEach((s) => { if (s && s.product_id) savedByPid.set(String(s.product_id), s) })
+
+  return (detail.items || []).map((it, i) => {
+    const qty = Number(it.qty) || 0
+    const pcs = Number(it.pcs_per_ctn) || 0
+    let ctns = Number(it.ctns) || 0
+    if (!ctns && pcs > 0) ctns = Math.ceil(qty / pcs)
+    const l = Number(it.ctn_length) || 0
+    const w = Number(it.ctn_width) || 0
+    const h = Number(it.ctn_height) || 0
+    let unitCbm = Number(it.cbm_per_ctn) || 0
+    // 单箱体积缺失但纸箱尺寸齐全时，由尺寸推算（cm³ → m³）
+    if (!unitCbm && l > 0 && w > 0 && h > 0) unitCbm = Number((l * w * h / 1000000).toFixed(4))
+    const unitNw = Number(it.nw_per_ctn) || 0
+    const unitGw = Number(it.gw_per_ctn) || 0
+    const price = Number(it.price) || 0
+    const totalCbm = Number((ctns * unitCbm).toFixed(3))
+    const row = {
+      product_id: it.product_id || null,
+      // 产品型号：按需求使用产品英文品名
+      model: it.name_en || it.model || '',
+      // HS 编码 + 申报品名：用于装箱数据按品类分组
+      hs_code: String(it.hs_code || it.product_hs_code || '').trim(),
+      declared_name: String(it.hs_product_name || '').trim(),
+      ctns, pcs, qty, price,
+      total: Number((qty * price).toFixed(2)),
+      l, w, h, unitCbm, unitNw, unitGw,
+      totalCbm,
+      totalNw: Number((ctns * unitNw).toFixed(2)),
+      totalGw: Number((ctns * unitGw).toFixed(2)),
+      // 申报体积：默认取总体积，可手动修改
+      declared: totalCbm,
+      _declaredEdited: false
+    }
+    // 上次保存过的编辑值优先
+    const sv = (it.product_id && savedByPid.get(String(it.product_id))) || savedArr[i]
+    if (sv && typeof sv === 'object') {
+      if (sv.model !== undefined && sv.model !== null) row.model = sv.model
+      const numKeys = ['ctns', 'pcs', 'qty', 'price', 'total', 'l', 'w', 'h', 'unitCbm', 'unitGw', 'unitNw', 'totalCbm', 'totalNw', 'totalGw', 'declared']
+      for (const k of numKeys) {
+        if (sv[k] !== undefined && sv[k] !== null && sv[k] !== '') row[k] = Number(sv[k]) || 0
+      }
+      row._declaredEdited = !!sv._declaredEdited
+      row.product_id = it.product_id || sv.product_id || null
+    }
+    return row
+  })
+}
+
+function buildPackHtml(detail, rows) {
+  const sum = rows.reduce((s, r) => ({
+    ctns: s.ctns + r.ctns,
+    qty: s.qty + r.qty,
+    total: s.total + r.total,
+    cbm: s.cbm + r.totalCbm,
+    nw: s.nw + r.totalNw,
+    gw: s.gw + r.totalGw,
+    declared: s.declared + r.declared
+  }), { ctns: 0, qty: 0, total: 0, cbm: 0, nw: 0, gw: 0, declared: 0 })
+
+  // 按 HS 编码 + 申报品名 分组输出，每组末尾一行小计（小计不参与总计）
+  let seq = 0
+  const body = groupPackRows(rows).map((group) => {
+    const { code, name, list } = group
+    const productRows = list.map((r) => {
+      seq += 1
+      return `
+    <tr>
+      <td>${seq}</td>
+      <td class="model">${r.model}</td>
+      <td>${r.ctns || ''}</td>
+      <td>${r.pcs || ''}</td>
+      <td class="num">${r.qty}</td>
+      <td class="num">${packNum(r.price, 2)}</td>
+      <td class="num">${packNum(r.total, 2)}</td>
+      <td class="num">${packDim(r.l)}</td>
+      <td class="num">${packDim(r.w)}</td>
+      <td class="num">${packDim(r.h)}</td>
+      <td class="num">${packNum(r.unitCbm, 3)}</td>
+      <td class="num">${packNum(r.unitGw, 2)}</td>
+      <td class="num">${packNum(r.unitNw, 2)}</td>
+      <td class="num">${packNum(r.totalCbm, 3)}</td>
+      <td class="num">${packNum(r.totalNw, 2)}</td>
+      <td class="num">${packNum(r.totalGw, 2)}</td>
+      <td class="num">${packNum(r.declared, 3)}</td>
+    </tr>`
+    }).join('')
+    const agg = list.reduce((s, r) => ({
+      ctns: s.ctns + (Number(r.ctns) || 0),
+      qty: s.qty + (Number(r.qty) || 0),
+      amount: s.amount + (Number(r.total) || 0),
+      cbm: s.cbm + (Number(r.totalCbm) || 0),
+      gw: s.gw + (Number(r.totalGw) || 0)
+    }), { ctns: 0, qty: 0, amount: 0, cbm: 0, gw: 0 })
+    const subRow = `
+    <tr class="subtotal">
+      <td></td>
+      <td class="model">小计 · ${packGroupLabel({ code, name })}</td>
+      <td class="num"><span class="sub-k">件数</span><span class="sub-v">${Number(agg.ctns.toFixed(2))}</span></td>
+      <td></td>
+      <td class="num"><span class="sub-k">数量</span><span class="sub-v">${agg.qty}</span></td>
+      <td class="num"><span class="sub-k">平均价</span><span class="sub-v">${agg.qty ? packNum(agg.amount / agg.qty, 2) : '0.00'}</span></td>
+      <td></td>
+      <td></td><td></td><td></td>
+      <td></td><td></td><td></td>
+      <td class="num"><span class="sub-k">总体积</span><span class="sub-v">${packNum(agg.cbm, 3)}</span></td>
+      <td></td>
+      <td class="num"><span class="sub-k">总毛重</span><span class="sub-v">${packNum(agg.gw, 2)}</span></td>
+      <td></td>
+    </tr>`
+    return productRows + subRow
+  }).join('') || `<tr><td colspan="17" style="padding:14px;">暂无产品数据</td></tr>`
+
+  return `
+    <style>
+      @page { size: A4 landscape; margin: 10mm; }
+      .pack-doc { font-family: 'SimSun','宋体',serif; color:#000; font-size:9pt; }
+      .pack-doc .p-title { font-size: 16pt; font-weight: bold; text-align: center; letter-spacing: 4px; margin-bottom: 8px; }
+      .pack-doc .p-meta { display: flex; justify-content: space-between; font-size: 10pt; margin-bottom: 6px; }
+      .pack-doc table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+      .pack-doc th, .pack-doc td { border: 1px solid #000; padding: 4px 3px; font-size: 9pt; text-align: center; vertical-align: middle; word-break: break-all; }
+      .pack-doc th { background: #f2f2f2; font-weight: bold; line-height: 1.25; }
+      .pack-doc td.num { text-align: right; padding-right: 5px; }
+      .pack-doc td.model { text-align: left; padding-left: 5px; }
+      .pack-doc tfoot td { font-weight: bold; background: #fafafa; }
+      .pack-doc tr.subtotal td { background: #fff7ed; font-weight: bold; }
+      .pack-doc .sub-k { display: block; font-size: 6.5pt; font-weight: 400; color: #92400e; line-height: 1.1; }
+      .pack-doc .sub-v { display: block; line-height: 1.2; }
+    </style>
+    <div class="pack-doc">
+      <div class="p-title">装箱数据 / PACKING DATA</div>
+      <div class="p-meta">
+        <span><strong>PI NO.:</strong> ${detail.pi_number || ''}</span>
+        <span><strong>Date:</strong> ${detail.signing_date || ''}</span>
+      </div>
+      <table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;">
+        <colgroup>
+          <col style="width:4%"><col style="width:15%"><col style="width:4.5%"><col style="width:5.5%">
+          <col style="width:5.5%"><col style="width:6.5%"><col style="width:7.5%">
+          <col style="width:3.5%"><col style="width:3.5%"><col style="width:3.5%">
+          <col style="width:6%"><col style="width:5.5%"><col style="width:5.5%">
+          <col style="width:6.5%"><col style="width:6%"><col style="width:6%"><col style="width:6%">
+        </colgroup>
+        <thead>
+          <tr>
+            <th rowspan="2">序号</th>
+            <th rowspan="2">产品型号</th>
+            <th rowspan="2">件数</th>
+            <th rowspan="2">包装数</th>
+            <th rowspan="2">数量</th>
+            <th rowspan="2">单价</th>
+            <th rowspan="2">总价</th>
+            <th colspan="3">装箱后外径尺寸(cm)</th>
+            <th colspan="3">单件体积/重量</th>
+            <th rowspan="2">总体积</th>
+            <th rowspan="2">总净重</th>
+            <th rowspan="2">总毛重</th>
+            <th rowspan="2">申报体积</th>
+          </tr>
+          <tr>
+            <th>长</th><th>宽</th><th>高</th>
+            <th>体积</th><th>毛重</th><th>净重</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+        <tfoot>
+          <tr>
+            <td colspan="2">合计</td>
+            <td>${Number(sum.ctns.toFixed(2))}</td>
+            <td></td>
+            <td class="num">${sum.qty}</td>
+            <td></td>
+            <td class="num">${packNum(sum.total, 2)}</td>
+            <td colspan="3"></td>
+            <td colspan="3"></td>
+            <td class="num">${packNum(sum.cbm, 3)}</td>
+            <td class="num">${packNum(sum.nw, 2)}</td>
+            <td class="num">${packNum(sum.gw, 2)}</td>
+            <td class="num">${packNum(sum.declared, 3)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>`
+}
+
+// 按 HS 编码 + 申报品名 分组（两者都相同才算同一品类，未填的排最后）
+function groupPackRows(rows) {
+  const map = new Map()
+  ;(rows || []).forEach((r) => {
+    const code = String(r.hs_code || '').trim()
+    const name = String(r.declared_name || '').trim()
+    const key = code || name ? `${code}||${name}` : '未分类'
+    if (!map.has(key)) map.set(key, { code, name, list: [] })
+    map.get(key).list.push(r)
+  })
+  return [...map.values()].sort((a, b) => {
+    if ((a.code || a.name) === '') return 1
+    if ((b.code || b.name) === '') return -1
+    return a.code === b.code ? a.name.localeCompare(b.name) : a.code.localeCompare(b.code)
+  })
+}
+
+// 品类小计标题
+function packGroupLabel({ code, name }) {
+  if (!code && !name) return '未分类'
+  if (code && name) return `HS ${code} · ${name}`
+  return code ? `HS ${code}` : name
+}
+
+// 表格展示行：产品行 + 每个 HS 品类下方一行小计（仅展示，不进入 packForm）
+const packDisplayRows = computed(() => {
+  const out = []
+  let seq = 0
+  groupPackRows(packForm.value).forEach((group) => {
+    const { code, name, list } = group
+    list.forEach((r) => {
+      seq += 1
+      r._seq = seq
+      r._rowKey = `p-${r.product_id || 'n'}-${seq}`
+      out.push(r)
+    })
+    const agg = list.reduce((s, r) => ({
+      ctns: s.ctns + (Number(r.ctns) || 0),
+      qty: s.qty + (Number(r.qty) || 0),
+      amount: s.amount + (Number(r.total) || 0),
+      cbm: s.cbm + (Number(r.totalCbm) || 0),
+      gw: s.gw + (Number(r.totalGw) || 0)
+    }), { ctns: 0, qty: 0, amount: 0, cbm: 0, gw: 0 })
+    out.push({
+      _isSubtotal: true,
+      _rowKey: `sub-${code}-${name}`,
+      _groupLabel: packGroupLabel({ code, name }),
+      _ctns: Number(agg.ctns.toFixed(2)),
+      _qty: agg.qty,
+      // 单品平均价 = 品类总价 ÷ 品类总数量
+      _avgPrice: agg.qty ? Number((agg.amount / agg.qty).toFixed(2)) : 0,
+      _cbm: Number(agg.cbm.toFixed(3)),
+      _gw: Number(agg.gw.toFixed(2))
+    })
+  })
+  return out
+})
+
+// 装箱数据实时合计
+const packTotals = computed(() => {
+  return (packForm.value || []).reduce((s, r) => ({
+    ctns: s.ctns + (Number(r.ctns) || 0),
+    qty: s.qty + (Number(r.qty) || 0),
+    total: s.total + (Number(r.total) || 0),
+    cbm: s.cbm + (Number(r.totalCbm) || 0),
+    nw: s.nw + (Number(r.totalNw) || 0),
+    gw: s.gw + (Number(r.totalGw) || 0),
+    declared: s.declared + (Number(r.declared) || 0)
+  }), { ctns: 0, qty: 0, total: 0, cbm: 0, nw: 0, gw: 0, declared: 0 })
+})
+
+// 编辑装箱行：联动重算派生字段
+function recalcPackRow(row, field) {
+  const num = (v) => Number(v) || 0
+  if (field === 'ctns' || field === 'pcs') {
+    row.qty = Number((num(row.ctns) * num(row.pcs)).toFixed(0))
+  }
+  if (field === 'l' || field === 'w' || field === 'h') {
+    const l = num(row.l), w = num(row.w), h = num(row.h)
+    if (l > 0 && w > 0 && h > 0) row.unitCbm = Number((l * w * h / 1000000).toFixed(4))
+  }
+  if (['ctns', 'pcs', 'l', 'w', 'h', 'unitCbm'].includes(field)) {
+    row.totalCbm = Number((num(row.ctns) * num(row.unitCbm)).toFixed(3))
+    if (!row._declaredEdited) row.declared = row.totalCbm
+  }
+  if (['ctns', 'pcs', 'unitNw'].includes(field)) {
+    row.totalNw = Number((num(row.ctns) * num(row.unitNw)).toFixed(2))
+  }
+  if (['ctns', 'pcs', 'unitGw'].includes(field)) {
+    row.totalGw = Number((num(row.ctns) * num(row.unitGw)).toFixed(2))
+  }
+  if (['ctns', 'pcs', 'qty', 'price'].includes(field)) {
+    row.total = Number((num(row.qty) * num(row.price)).toFixed(2))
+  }
+  if (field === 'declared') row._declaredEdited = true
+}
+
+async function openPackData(row) {
+  const docs = await getOrderDocs(row)
+  currentOrder.value = docs
+  editingOrderId.value = docs.detail.id
+  packPi.value = docs.detail.pi_number || ''
+  packTitle.value = `装箱数据 - ${packPi.value}`
+  packForm.value = buildPackRows(docs.detail, parseDoc(docs.detail.packing_data))
+  packVisible.value = true
+}
+
+async function savePack() {
+  packSaving.value = true
+  try {
+    // 剔除仅用于表格展示的字段
+    const rows = packForm.value.map(({ _seq, _rowKey, ...rest }) => rest)
+    await updateOrder(editingOrderId.value, { packing_data: rows })
+    ElMessage.success('装箱数据已保存')
+    loadList()
+  } catch { /* 拦截器 */ }
+  finally { packSaving.value = false }
+}
+
+function onPrintPack() {
+  printDocument(buildPackHtml(currentOrder.value.detail, packForm.value), packTitle.value)
+}
+function onExportPackExcel() {
+  // Excel 对 class 样式支持有限，给单元格补内联边框，确保导出的 xls 有表格线
+  const html = buildPackHtml(currentOrder.value.detail, packForm.value)
+    .replace(/<(td|th)(?=[\s>])(?![^>]*style=)/g, '<$1 style="border:1px solid #000;"')
+  exportExcel(html, `PackingData_${packPi.value}.xls`)
 }
 
 /* ========== 编辑：报关草单 ========== */
@@ -1354,6 +1828,15 @@ onMounted(() => { loadList(); loadOptions() })
 .items-section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .order-summary-bar { margin-top: 12px; padding: 8px 12px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; font-size: 13px; color: #0f172a; display: flex; gap: 24px; justify-content: flex-end; align-items: center; }
 .order-summary-bar b { color: #0369a1; font-size: 14px; }
+.pack-summary { margin-top: 10px; padding: 8px 12px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 6px; font-size: 13px; color: #0f172a; display: flex; gap: 22px; justify-content: flex-end; flex-wrap: wrap; align-items: center; }
+.pack-summary b { color: #0369a1; font-size: 14px; }
+:deep(.pack-subtotal-row) { background: #fff7ed; }
+:deep(.pack-subtotal-row td) { font-weight: 600; color: #9a3412; }
+:deep(.pack-subtotal-row td .cell) { text-align: right; }
+.pack-sub-label { display: block; text-align: left; font-size: 12px; white-space: nowrap; }
+.pack-sub-val { display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
+.pack-sub-val i { font-style: normal; font-size: 10px; font-weight: 400; color: #b45309; }
+.pack-sub-val b { font-size: 12px; }
 .summary-title { color: #475569; font-weight: 600; }
 .row-total { font-weight: 700; color: #dc2626; }
 
