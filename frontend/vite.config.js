@@ -10,6 +10,9 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
   },
+  build: {
+    reportCompressedSize: false // 跳过 gzip 体积统计，服务器构建卡顿时可加速
+  },
   server: {
     host: true, // 监听 0.0.0.0，允许局域网同事访问
     port: 5173,
