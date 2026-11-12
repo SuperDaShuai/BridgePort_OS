@@ -1282,6 +1282,70 @@ const migrations = [
     async up(conn) {
       await runSQL(conn, 'ALTER TABLE orders ADD COLUMN packing_data MEDIUMTEXT NULL DEFAULT NULL COMMENT "装箱数据JSON" AFTER decl_data');
     }
+  },
+
+  // 057 报价单支持箱/件双单位模式
+  {
+    id: 57,
+    name: 'quotation_qty_mode',
+    desc: 'quotations 加 qty_mode; quotation_items 加 box_length/width/height(彩盒单件)、moq_pcs、price_rmb，历史数据回填',
+    async check(conn) {
+      // 全部列存在 + 没有待回填的行才算完成
+      const needCols = [
+        ['quotations', 'qty_mode'],
+        ['quotation_items', 'box_length'], ['quotation_items', 'box_width'], ['quotation_items', 'box_height'],
+        ['quotation_items', 'moq_pcs'], ['quotation_items', 'price_rmb']
+      ];
+      for (const [t, c] of needCols) {
+        if (!(await columnExists(conn, t, c))) return false;
+      }
+      // 待回填：有 product_id 的行，box_length 为空但 products 表里有数据
+      const [r] = await conn.query(
+        `SELECT COUNT(*) AS c FROM quotation_items qi
+         JOIN products p ON qi.product_id = p.id
+         WHERE qi.box_length IS NULL AND p.box_length IS NOT NULL`
+      );
+      if (r[0].c > 0) return false;
+      return true;
+    },
+    async up(conn) {
+      // 1. quotations: qty_mode
+      if (!(await columnExists(conn, 'quotations', 'qty_mode'))) {
+        await runSQL(conn, `ALTER TABLE quotations
+          ADD COLUMN qty_mode VARCHAR(10) NULL DEFAULT 'ctn' COMMENT '数量单位模式: ctn=箱 / pcs=件' AFTER rfq_id`);
+      }
+      // 2. quotation_items 加 5 列
+      const itemCols = [
+        ['box_length',  "ALTER TABLE quotation_items ADD COLUMN box_length DECIMAL(10,2) NULL DEFAULT NULL COMMENT '彩盒单件长cm' AFTER pcs_per_ctn"],
+        ['box_width',   "ALTER TABLE quotation_items ADD COLUMN box_width  DECIMAL(10,2) NULL DEFAULT NULL COMMENT '彩盒单件宽cm' AFTER box_length"],
+        ['box_height',  "ALTER TABLE quotation_items ADD COLUMN box_height DECIMAL(10,2) NULL DEFAULT NULL COMMENT '彩盒单件高cm' AFTER box_width"],
+        ['moq_pcs',     "ALTER TABLE quotation_items ADD COLUMN moq_pcs INT NULL DEFAULT NULL COMMENT '件为单位的数量' AFTER moq"],
+        ['price_rmb',   "ALTER TABLE quotation_items ADD COLUMN price_rmb DECIMAL(12,4) NULL DEFAULT NULL COMMENT '价格基准(人民币)' AFTER price"]
+      ];
+      for (const [c, ddl] of itemCols) {
+        if (!(await columnExists(conn, 'quotation_items', c))) await runSQL(conn, ddl);
+      }
+      // 3. 回填 box 尺寸（按 product_id 从 products 表）
+      await runSQL(conn, `
+        UPDATE quotation_items qi
+        JOIN products p ON qi.product_id = p.id
+        SET qi.box_length = p.box_length, qi.box_width = p.box_width, qi.box_height = p.box_height
+        WHERE qi.product_id IS NOT NULL
+          AND (qi.box_length IS NULL OR qi.box_width IS NULL OR qi.box_height IS NULL)
+          AND p.box_length IS NOT NULL AND p.box_width IS NOT NULL AND p.box_height IS NOT NULL
+      `);
+      // 4. moq_pcs 回填：moq × pcs_per_ctn
+      await runSQL(conn, `
+        UPDATE quotation_items
+        SET moq_pcs = GREATEST(1, COALESCE(moq, 0) * COALESCE(pcs_per_ctn, 1))
+        WHERE moq_pcs IS NULL AND moq IS NOT NULL AND moq > 0
+      `);
+      // 5. price_rmb 回填：用现有 price
+      await runSQL(conn, `
+        UPDATE quotation_items SET price_rmb = price
+        WHERE price_rmb IS NULL AND price IS NOT NULL AND price > 0
+      `);
+    }
   }
 ];
 

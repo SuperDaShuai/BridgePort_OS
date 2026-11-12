@@ -190,7 +190,14 @@
         <el-divider content-position="left">
           <div class="divider-title">
             报价产品明细
-            <el-button type="primary" size="small" plain :icon="Plus" @click="addItemRow">+ 添加报价商品</el-button>
+            <div style="display:flex; align-items:center; gap:12px;">
+              <span style="font-size:12px; color:#64748b;">数量单位：</span>
+              <el-radio-group v-model="form.qty_mode" size="small" @change="onQtyModeChange">
+                <el-radio-button value="ctn">以箱为单位</el-radio-button>
+                <el-radio-button value="pcs">以件为单位</el-radio-button>
+              </el-radio-group>
+              <el-button type="primary" size="small" plain :icon="Plus" @click="addItemRow">+ 添加报价商品</el-button>
+            </div>
           </div>
         </el-divider>
 
@@ -255,9 +262,19 @@
               />
             </template>
           </el-table-column>
-          <el-table-column label="数量(箱)" width="95" align="center">
+          <el-table-column :label="form.qty_mode === 'pcs' ? '数量(件)' : '数量(箱)'" width="95" align="center">
             <template #default="{ row }">
               <el-input-number
+                v-if="form.qty_mode === 'pcs'"
+                v-model="row.moq_pcs"
+                :min="0"
+                :controls="false"
+                size="small"
+                style="width: 100%"
+                @change="calcQuoteRow(row)"
+              />
+              <el-input-number
+                v-else
                 v-model="row.moq"
                 :min="0"
                 :controls="false"
@@ -286,11 +303,19 @@
 
           <el-table-column label="合计" width="160" align="center">
             <template #default="{ row }">
-              <div class="calc-info" v-if="row.moq && row.pcs_per_ctn">
+              <!-- 箱模式：显示数量 PCS、金额、毛重、体积 -->
+              <div class="calc-info" v-if="form.qty_mode !== 'pcs' && row.moq && row.pcs_per_ctn">
                 <div class="ci-line"><span class="ci-label">数量:</span> {{ (row.moq * row.pcs_per_ctn).toLocaleString() }} PCS</div>
                 <div class="ci-line"><span class="ci-label">金额:</span> {{ priceSign }}{{ formatMoney((row.moq || 0) * (row.pcs_per_ctn || 0) * (row.price || 0)) }}</div>
                 <div class="ci-line"><span class="ci-label">毛重:</span> {{ ((row.moq || 0) * (row.gw_per_ctn || 0)).toFixed(1) }} kg</div>
                 <div class="ci-line"><span class="ci-label">体积:</span> {{ ((row.moq || 0) * (row.cbm_per_ctn || 0)).toFixed(3) }} cbm</div>
+              </div>
+              <!-- 件模式：直接显示件数、金额，体积用彩盒尺寸算，无毛重 -->
+              <div class="calc-info" v-else-if="form.qty_mode === 'pcs' && row.moq_pcs">
+                <div class="ci-line"><span class="ci-label">数量:</span> {{ (row.moq_pcs || 0).toLocaleString() }} PCS</div>
+                <div class="ci-line"><span class="ci-label">金额:</span> {{ priceSign }}{{ formatMoney((row.moq_pcs || 0) * (row.price || 0)) }}</div>
+                <div class="ci-line" v-if="perPieceCbm(row) > 0"><span class="ci-label">体积:</span> {{ ((row.moq_pcs || 0) * perPieceCbm(row)).toFixed(3) }} cbm</div>
+                <div class="ci-line" v-else-if="row.box_length && row.box_width && row.box_height" style="color:#94a3b8;">彩盒尺寸有，请选产品</div>
               </div>
               <div v-else class="load-qty-empty">—</div>
             </template>
@@ -303,14 +328,16 @@
           </el-table-column>
         </el-table>
 
-        <!-- 明细汇总：总体积 / 总毛重 / 总净重 / 总金额 -->
+        <!-- 明细汇总 -->
         <div class="quote-total-bar">
           <span>总体积：</span>
           <span class="total-amount">{{ quoteTotals.cbm }} CBM</span>
-          <span style="margin: 0 24px;">总毛重：</span>
-          <span class="total-amount">{{ quoteTotals.gw }} kg</span>
-          <span style="margin: 0 24px;">总净重：</span>
-          <span class="total-amount">{{ quoteTotals.nw }} kg</span>
+          <template v-if="form.qty_mode !== 'pcs'">
+            <span style="margin: 0 24px;">总毛重：</span>
+            <span class="total-amount">{{ quoteTotals.gw }} kg</span>
+            <span style="margin: 0 24px;">总净重：</span>
+            <span class="total-amount">{{ quoteTotals.nw }} kg</span>
+          </template>
           <span style="margin: 0 24px;">总金额：</span>
           <span class="total-amount">{{ priceSign }}{{ formatMoney(quoteTotals.amount) }}</span>
         </div>
@@ -417,6 +444,103 @@ const converting = ref(false)
 function formatMoney(v) {
   return Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
+
+// 数字转英文大写金额（SAY ... ONLY 格式，外贸单据标准写法）
+function numberToWords(num, currency = 'USD') {
+  const ones = ['', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE',
+    'TEN', 'ELEVEN', 'TWELVE', 'THIRTEEN', 'FOURTEEN', 'FIFTEEN', 'SIXTEEN', 'SEVENTEEN', 'EIGHTEEN', 'NINETEEN']
+  const tens = ['', '', 'TWENTY', 'THIRTY', 'FORTY', 'FIFTY', 'SIXTY', 'SEVENTY', 'EIGHTY', 'NINETY']
+  const scales = ['', 'THOUSAND', 'MILLION', 'BILLION']
+
+  function convertGroup(n) {
+    // n: 0~999
+    let s = ''
+    const h = Math.floor(n / 100)
+    const t = Math.floor((n % 100) / 10)
+    const o = n % 10
+    if (h > 0) {
+      s += ones[h] + ' HUNDRED'
+      if (t > 0 || o > 0) s += ' AND '
+    }
+    if (t === 1) {
+      s += ones[10 + o]
+    } else if (t > 1) {
+      s += tens[t]
+      if (o > 0) s += '-' + ones[o]
+    } else if (o > 0) {
+      s += ones[o]
+    }
+    return s.trim()
+  }
+
+  const n = Number(num || 0)
+  if (isNaN(n) || n === 0) {
+    const zero = currency === 'RMB' ? 'YUAN' : 'DOLLARS'
+    return `SAY ${currency === 'RMB' ? 'RENMINBI' : 'US ' + zero} ZERO ${zero} ONLY`
+  }
+
+  const isNeg = n < 0
+  const absN = Math.abs(n)
+  const intPart = Math.floor(absN)
+  const decPart = Math.round((absN - intPart) * 100)
+
+  // 整数部分分组（每3位一组）
+  const groups = []
+  let remaining = intPart
+  if (remaining === 0) groups.push(0)
+  while (remaining > 0) {
+    groups.unshift(remaining % 1000)
+    remaining = Math.floor(remaining / 1000)
+  }
+
+  let intWords = ''
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i]
+    if (g === 0) continue
+    const scaleIdx = groups.length - 1 - i
+    const w = convertGroup(g)
+    intWords += (intWords ? ' ' : '') + w + (scales[scaleIdx] ? ' ' + scales[scaleIdx] : '')
+  }
+
+  // 货币单位
+  let currencyName, mainUnit, subUnit
+  if (currency === 'RMB') {
+    currencyName = 'RENMINBI'
+    mainUnit = 'YUAN'
+    subUnit = 'CENTS'
+  } else {
+    currencyName = 'US DOLLARS'
+    mainUnit = 'DOLLARS'
+    subUnit = 'CENTS'
+  }
+
+  let decWords = ''
+  if (decPart > 0) {
+    if (decPart === 100) {
+      intWords = intWords ? intWords + ' ONE' : 'ONE'
+      decWords = ''
+    } else {
+      const dTens = Math.floor(decPart / 10)
+      const dOnes = decPart % 10
+      if (dTens === 1) {
+        decWords = ones[10 + dOnes]
+      } else {
+        decWords = tens[dTens] + (dOnes > 0 ? '-' + ones[dOnes] : '')
+      }
+    }
+  }
+
+  let result = 'SAY ' + (isNeg ? 'NEGATIVE ' : '') + currencyName + ' '
+  if (intPart > 0) {
+    result += intWords + ' ' + mainUnit
+  }
+  if (decPart > 0 && decWords) {
+    result += (intPart > 0 ? ' AND ' : '') + decWords + ' ' + subUnit
+  }
+  result += ' ONLY'
+
+  return result
+}
 const rules = {
   quotation_number: [{ required: true, message: '报价单号不能为空', trigger: 'blur' }],
   quotation_date: [{ required: true, message: '请选择报价日期', trigger: 'change' }],
@@ -429,15 +553,20 @@ const blankForm = () => ({
   quotation_number: '', quotation_date: '', valid_until: '', client_id: null, supplier_id: null,
   currency: 'USD', price_terms: 'FOB', lead_time: '', payment_terms: '',
   loading_port: '', destination_port: '', total_amount: undefined,
-  status: '草稿', remark: '', items: [], owner_name: ''
+  status: '草稿', remark: '', items: [], owner_name: '',
+  qty_mode: 'ctn' // 'ctn'=以箱为单位(默认), 'pcs'=以件为单位
 })
 
 const blankItem = () => ({
   product_id: null, model: '', name_en: '', hs_code: '', unit: '',
   img_url: '', spec: '', packing_desc: '',
-  pcs_per_ctn: null, ctn_length: null, ctn_width: null, ctn_height: null,
+  pcs_per_ctn: null,
+  box_length: null, box_width: null, box_height: null,   // 彩盒单件尺寸
+  ctn_length: null, ctn_width: null, ctn_height: null,   // 外箱尺寸
   nw_per_ctn: null, gw_per_ctn: null, cbm_per_ctn: null,
-  price: undefined, price_rmb: undefined, moq: undefined,
+  price: undefined, price_rmb: undefined,
+  moq: undefined,      // 箱模式：箱数
+  moq_pcs: undefined,  // 件模式：件数
   est_qty_20gp: null, est_qty_40gp: null, est_qty_40hq: null,
   load_quantity_desc: ''
 })
@@ -491,8 +620,11 @@ function onProductPick(row, productId) {
   row.unit = p.unit || '台'
   row.img_url = p.img_url || ''
 
-  // 装箱与尺寸快照
+  // 装箱与彩盒尺寸快照
   row.pcs_per_ctn = p.pcs_per_ctn ?? null
+  row.box_length = p.box_length ?? null
+  row.box_width = p.box_width ?? null
+  row.box_height = p.box_height ?? null
   row.ctn_length = p.ctn_length ?? null
   row.ctn_width = p.ctn_width ?? null
   row.ctn_height = p.ctn_height ?? null
@@ -510,8 +642,12 @@ function onProductPick(row, productId) {
   row.price = row.price_rmb != null
     ? (priceCurrency.value === 'USD' ? Number((row.price_rmb / usdRate()).toFixed(2)) : row.price_rmb)
     : undefined
-  // 数量(箱) 默认 1 箱
-  if (!row.moq) row.moq = 1
+  // 数量默认值（按当前模式）
+  if (form.value.qty_mode === 'pcs') {
+    if (!row.moq_pcs) row.moq_pcs = Number(row.pcs_per_ctn) || 1
+  } else {
+    if (!row.moq) row.moq = 1
+  }
   calcQuoteRow(row)
 
   // Specification 多行框（产品英文名已在标题列以粗体单独展示，不再写入 spec 避免重复）
@@ -575,10 +711,50 @@ function setQuoteCurrency(to) {
   form.value.currency = to
 }
 
-// 明细汇总：总体积 / 总毛重 / 总净重 / 总金额（箱数 moq × 单箱基准值）
+// 单件彩盒体积（cbm）：box_l × box_w × box_h / 1_000_000
+function perPieceCbm(row) {
+  const l = Number(row.box_length) || 0
+  const w = Number(row.box_width) || 0
+  const h = Number(row.box_height) || 0
+  if (!l || !w || !h) return 0
+  return Number(((l * w * h) / 1_000_000).toFixed(6))
+}
+
+// 模式切换时对每一行做合理换算：
+//   ctn → pcs：moq_pcs = moq * pcs_per_ctn
+//   pcs → ctn：moq = ceil(moq_pcs / pcs_per_ctn)（无 pcs_per_ctn 时直接取件数当箱数兜底）
+function onQtyModeChange(to) {
+  const items = form.value.items || []
+  if (to === 'pcs') {
+    items.forEach((it) => {
+      const ctns = Number(it.moq) || 0
+      const ppc = Number(it.pcs_per_ctn) || 1
+      it.moq_pcs = Math.round(ctns * ppc)
+    })
+  } else {
+    items.forEach((it) => {
+      const pcs = Number(it.moq_pcs) || 0
+      const ppc = Number(it.pcs_per_ctn)
+      it.moq = ppc > 0 ? Math.ceil(pcs / ppc) : pcs
+    })
+  }
+}
+
+// 明细汇总：按 qty_mode 切换计算口径
 const quoteTotals = computed(() => {
   let cbm = 0, gw = 0, nw = 0, amount = 0
-  ;(form.value.items || []).forEach((it) => {
+  const items = form.value.items || []
+  if (form.value.qty_mode === 'pcs') {
+    items.forEach((it) => {
+      const pcs = Number(it.moq_pcs) || 0
+      cbm += pcs * perPieceCbm(it)
+      amount += pcs * (Number(it.price) || 0)
+    })
+    // 件模式无外箱概念，gw/nw 置 0（汇总栏也隐藏）
+    return { cbm: cbm.toFixed(3), gw: '0.00', nw: '0.00', amount: Number(amount.toFixed(2)) }
+  }
+  // 箱模式（默认）：moq × 单箱基准值
+  items.forEach((it) => {
     const ctns = Number(it.moq) || 0
     cbm += ctns * (Number(it.cbm_per_ctn) || 0)
     gw += ctns * (Number(it.gw_per_ctn) || 0)
@@ -641,6 +817,15 @@ async function openEdit(row) {
     return { ...it, price_rmb: base || undefined, price: Number(it.price) }
   })
   form.value = { ...detail, items: detail.items }
+  // 历史数据兼容：没有 qty_mode 默认 'ctn'；历史明细没有 moq_pcs 时从 moq × pcs_per_ctn 派生
+  if (!form.value.qty_mode) form.value.qty_mode = 'ctn'
+  form.value.items.forEach((it) => {
+    if (it.moq_pcs == null) {
+      const ctns = Number(it.moq) || 0
+      const ppc = Number(it.pcs_per_ctn) || 1
+      it.moq_pcs = Math.round(ctns * ppc)
+    }
+  })
   dialogVisible.value = true
 }
 
@@ -653,8 +838,13 @@ async function onSave() {
     ElMessage.warning('请至少添加一行产品明细（需选择产品并填写单价）')
     return
   }
-  // 计算总金额：moq(箱数) × pcs_per_ctn(件/箱) × price(单价)
+  // 计算总金额：按 qty_mode 分支
+  const isPcs = form.value.qty_mode === 'pcs'
   form.value.total_amount = items.reduce((s, it) => {
+    if (isPcs) {
+      const pcs = Number(it.moq_pcs) || 0
+      return s + pcs * (Number(it.price) || 0)
+    }
     const ctns = Number(it.moq) || 0
     const pcs = Number(it.pcs_per_ctn) || 0
     return s + ctns * pcs * (Number(it.price) || 0)
@@ -705,15 +895,30 @@ function buildQuoteHtml(q) {
   const client = clientOptions.value.find(c => c.id === q.client_id) || {}
   const currSign = q.currency === 'RMB' ? '¥' : '$'
   const items = q.items || []
-  const total = items.reduce((s, it) => {
-    const ctns = Number(it.moq) || 0
-    const pcs = Number(it.pcs_per_ctn) || 0
-    return s + ctns * pcs * (Number(it.price) || 0)
-  }, 0)
-  const totalCtns = items.reduce((s, it) => s + (Number(it.moq) || 0), 0)
-  const totalQty = items.reduce((s, it) => s + (Number(it.moq) || 0) * (Number(it.pcs_per_ctn) || 0), 0)
-  const totalGw = items.reduce((s, it) => s + (Number(it.moq) || 0) * (Number(it.gw_per_ctn) || 0), 0)
-  const totalCbm = items.reduce((s, it) => s + (Number(it.moq) || 0) * (Number(it.cbm_per_ctn) || 0), 0)
+  const isPcs = q.qty_mode === 'pcs'
+  // 单件彩盒体积 helper（PDF 里不引用模板函数，内联一份）
+  const pdfPerPieceCbm = (it) => {
+    const l = Number(it.box_length) || 0, w = Number(it.box_width) || 0, h = Number(it.box_height) || 0
+    return (l && w && h) ? Number(((l * w * h) / 1_000_000).toFixed(6)) : 0
+  }
+
+  let totalCtns = 0, totalQty = 0, totalGw = 0, totalCbm = 0, totalAmount = 0
+  items.forEach((it) => {
+    if (isPcs) {
+      const pcs = Number(it.moq_pcs) || 0
+      totalQty += pcs
+      totalCbm += pcs * pdfPerPieceCbm(it)
+      totalAmount += pcs * (Number(it.price) || 0)
+    } else {
+      const ctns = Number(it.moq) || 0
+      const pcs = Number(it.pcs_per_ctn) || 0
+      totalCtns += ctns
+      totalQty += ctns * pcs
+      totalGw += ctns * (Number(it.gw_per_ctn) || 0)
+      totalCbm += ctns * (Number(it.cbm_per_ctn) || 0)
+      totalAmount += ctns * pcs * (Number(it.price) || 0)
+    }
+  })
 
   const header = `
     <div style="padding-bottom:6px; display:flex; justify-content:space-between; align-items:flex-start;">
@@ -752,11 +957,18 @@ function buildQuoteHtml(q) {
   `
 
   const itemRows = items.map((it, idx) => {
-    const ctns = Number(it.moq) || 0
-    const pcs = Number(it.pcs_per_ctn) || 0
-    const qty = ctns * pcs
+    let ctns, qty, amount
+    if (isPcs) {
+      ctns = isPcs ? '-' : (Number(it.moq) || 0)
+      qty = Number(it.moq_pcs) || 0
+      amount = qty * (Number(it.price) || 0)
+    } else {
+      ctns = Number(it.moq) || 0
+      const ppc = Number(it.pcs_per_ctn) || 0
+      qty = ctns * ppc
+      amount = qty * (Number(it.price) || 0)
+    }
     const price = Number(it.price) || 0
-    const amount = qty * price
     // 从 spec 快照中剥离 HS 行与与产品英文名重复的行，统一只渲染一次（兼容历史数据）
     const specRaw = it.spec ? String(it.spec) : ''
     const specHsMatch = specRaw.match(/HS\s*[:：]\s*([A-Za-z0-9.]+)/i)
@@ -796,7 +1008,7 @@ function buildQuoteHtml(q) {
         <th style="width:70px; text-align:center;">Photo</th>
         <th style="width:26%; text-align:center;">Description & Specification</th>
         <th style="width:16%; text-align:center;">Packing</th>
-        <th style="width:7%; text-align:center;">CTNS</th>
+        <th style="width:7%; text-align:center;">${isPcs ? 'Mode' : 'CTNS'}</th>
         <th style="width:9%; text-align:center;">Qty (pcs)</th>
         <th style="width:8%; text-align:center;">Unit Price</th>
         <th style="width:11%; text-align:center;">Amount</th>
@@ -805,13 +1017,19 @@ function buildQuoteHtml(q) {
         ${itemRows}
         <tr style="font-weight:bold; background:#f8fafc;">
           <td colspan="5" style="text-align:right;">TOTAL:</td>
-          <td style="text-align:right;">${totalCtns}</td>
+          <td style="text-align:right;">${isPcs ? '—' : totalCtns}</td>
           <td style="text-align:right;">${totalQty}</td>
           <td></td>
-          <td style="text-align:right; color:#059669;">${currSign}${formatMoney(total)}</td>
+          <td style="text-align:right; color:#059669;">${currSign}${formatMoney(totalAmount)}</td>
         </tr>
-        <tr style="font-size:9px; color:#64748b;">
-          <td colspan="9" style="text-align:right;">TOTAL G.W.: ${totalGw.toFixed(1)} KGS &nbsp;|&nbsp; TOTAL MEASUREMENT: ${totalCbm.toFixed(3)} CBM</td>
+        <tr style="font-size:11.5px; color:#0f172a;">
+          <td colspan="5" style="text-align:left; padding:10px 10px; font-weight:700;">TOTAL AMOUNT IN WORDS: <span style="color:#059669; font-weight:800; letter-spacing:0.3px;">${numberToWords(totalAmount, q.currency || 'USD')}</span></td>
+          <td colspan="4" style="text-align:right; color:#334155; font-size:11px; font-weight:600;">
+            ${isPcs
+              ? `TOTAL MEASUREMENT: ${totalCbm.toFixed(3)} CBM`
+              : `TOTAL G.W.: ${totalGw.toFixed(1)} KGS &nbsp;|&nbsp; TOTAL MEASUREMENT: ${totalCbm.toFixed(3)} CBM`
+            }
+          </td>
         </tr>
       </tbody>
     </table>

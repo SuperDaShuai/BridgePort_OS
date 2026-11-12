@@ -17,15 +17,18 @@ const ORDER_ITEM_FIELDS = [
 const ALLOWED = [
   'quotation_number', 'quotation_date', 'valid_until', 'client_id', 'supplier_id',
   'currency', 'price_terms', 'lead_time', 'payment_terms',
-  'loading_port', 'destination_port', 'remark', 'total_amount', 'status', 'rfq_id'
+  'loading_port', 'destination_port', 'remark', 'total_amount', 'status', 'rfq_id',
+  'qty_mode'  // 数量单位模式：'ctn' 箱 / 'pcs' 件
 ];
 const REQUIRED = ['quotation_number', 'quotation_date', 'client_id'];
 const ITEM_FIELDS = [
   'product_id', 'model', 'name_en', 'hs_code', 'unit',
   'img_url', 'spec', 'packing_desc',
-  'pcs_per_ctn', 'ctn_length', 'ctn_width', 'ctn_height',
+  'pcs_per_ctn',
+  'box_length', 'box_width', 'box_height',     // 彩盒单件尺寸
+  'ctn_length', 'ctn_width', 'ctn_height',     // 外箱尺寸
   'nw_per_ctn', 'gw_per_ctn', 'cbm_per_ctn',
-  'price', 'moq',
+  'price', 'price_rmb', 'moq', 'moq_pcs',       // moq=箱数, moq_pcs=件数
   'est_qty_20gp', 'est_qty_40gp', 'est_qty_40hq',
   'load_quantity_desc'
 ];
