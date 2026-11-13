@@ -98,7 +98,22 @@
             <el-date-picker v-model="form.signing_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
           </el-form-item>
           <el-form-item label="交货日期">
-            <el-date-picker v-model="form.delivery_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+            <el-input v-model="form.delivery_date" clearable placeholder="选日期，或输入文字如：收到定金后30天">
+              <template #append>
+                <el-popover v-model:visible="deliveryPickerVisible" placement="bottom-end" :width="330" trigger="click">
+                  <template #reference>
+                    <el-button :icon="Calendar" title="选择日期" />
+                  </template>
+                  <el-date-picker
+                    v-model="deliveryPickerValue"
+                    type="date"
+                    inline
+                    value-format="YYYY-MM-DD"
+                    @change="onDeliveryDatePick"
+                  />
+                </el-popover>
+              </template>
+            </el-input>
           </el-form-item>
           <el-form-item label="签约客户" prop="client_id">
             <el-select v-model="form.client_id" filterable placeholder="选择客户" style="width: 100%" @change="onClientChange">
@@ -326,7 +341,7 @@
 <script setup>
 import { onMounted, reactive, ref, computed, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Printer } from '@element-plus/icons-vue'
+import { Plus, Search, Printer, Calendar } from '@element-plus/icons-vue'
 import {
   listOrders, getOrder, createOrder, updateOrder, deleteOrder, getNextOrderNumber
 } from '@/api/orders'
@@ -369,6 +384,14 @@ const piVisible = ref(false)
 const piData = ref(null)
 const piContentRef = ref(null)
 const piHtml = ref('')
+// 交货日期：既支持日期选择，也支持直接输入文字说明
+const deliveryPickerVisible = ref(false)
+const deliveryPickerValue = ref('')
+function onDeliveryDatePick(val) {
+  if (!val) return
+  form.value.delivery_date = val
+  deliveryPickerVisible.value = false
+}
 
 const rules = {
   pi_number: [{ required: true, message: 'PI 编号不能为空', trigger: 'blur' }],
@@ -589,6 +612,7 @@ function onSearch() { query.page = 1; loadList() }
 
 async function openCreate() {
   form.value = blankForm()
+  deliveryPickerValue.value = ''
   // 负责人 = 当前登录人（新增时展示，编辑时展示已保存的负责人）
   form.value.owner_name = userStore.displayName
   priceCurrency.value = 'RMB'
@@ -603,6 +627,7 @@ async function openCreate() {
 
 async function openEdit(row) {
   const detail = await getOrder(row.id)
+  deliveryPickerValue.value = /^\d{4}-\d{2}-\d{2}/.test(detail.delivery_date || '') ? detail.delivery_date.slice(0, 10) : ''
   // 币种合并：订单结算币种由明细单价币种开关统一驱动，按订单存储币种初始化开关
   priceCurrency.value = detail.currency === 'USD' ? 'USD' : 'RMB'
   detail.show_special_req = !!detail.show_special_req

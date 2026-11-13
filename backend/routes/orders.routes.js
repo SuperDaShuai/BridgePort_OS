@@ -424,7 +424,7 @@ router.get(
     ws.getCell('G3').value = src.po_number || subOrder?.po_number || subOrder?.sub_contract_no || po.po_number || po.po_no || (order.pi_number ? order.pi_number + 'PO' : '');
     ws.getCell('C4').value = (req.operator && (req.operator.display_name || req.operator.username)) || '';
     ws.getCell('E4').value = new Date().toISOString().slice(0, 10);
-    ws.getCell('G4').value = (order.delivery_date || '').slice(0, 10);
+    ws.getCell('G4').value = order.delivery_date || '';
 
     // ===== 明细行准备 =====
     // item_extensions 是全量明细快照（含 model/qty/detail_spec/remark 等用户编辑字段），

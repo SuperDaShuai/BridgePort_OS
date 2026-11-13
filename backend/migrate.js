@@ -1346,6 +1346,27 @@ const migrations = [
         WHERE price_rmb IS NULL AND price IS NOT NULL AND price > 0
       `);
     }
+  },
+
+  // 058 外销订单交货日期改为文本：既可选日期，也可填文字说明
+  {
+    id: 58,
+    name: 'orders_delivery_date_text',
+    desc: 'orders.delivery_date 由 DATE 改为 VARCHAR(100)，支持"收到定金后30天"等文字说明，历史日期值自动转为字符串',
+    async check(conn) {
+      const [rows] = await conn.query(
+        `SELECT DATA_TYPE AS t FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'delivery_date'`
+      );
+      return rows.length > 0 && rows[0].t === 'varchar';
+    },
+    async up(conn) {
+      const fs = require('fs');
+      const path = require('path');
+      const sqlPath = path.join(__dirname, 'migrations', '058_orders_delivery_date_text.sql');
+      const sql = fs.readFileSync(sqlPath, 'utf8');
+      await runSQL(conn, sql);
+    }
   }
 ];
 
